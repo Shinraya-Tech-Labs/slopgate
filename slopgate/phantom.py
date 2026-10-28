@@ -5,20 +5,20 @@ in Python standard library, project manifests, or local repository files.
 """
 
 import ast
+import re
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-import re
-import sys
-import textwrap
-from typing import List, Set, Optional
+from typing import List, Optional, Set
+
 from slopgate.diff_parser import FileDiff
+from slopgate.fragment import Fragment
 
 
 class PhantomKind(str, Enum):
     HALLUCINATED_IMPORT = "HALLUCINATED_IMPORT"
     HALLUCINATED_STDLIB_METHOD = "HALLUCINATED_STDLIB_METHOD"
-    UNINSTALLED_DEPENDENCY = "UNINSTALLED_DEPENDENCY"
 
 
 @dataclass
@@ -30,14 +30,68 @@ class PhantomIncident:
     message: str
 
 
+def _normalize(name: str) -> str:
+    """Normalizes a distribution or module name for comparison (PEP 503-ish)."""
+    name = name.split("[")[0]
+    name = re.split(r"[<>=~!;\s]", name)[0]
+    return name.strip().replace("-", "_").replace(".", "_").lower()
+
+
 class PhantomDetector:
     """Detects phantom imports and hallucinated APIs added in diffs."""
 
     # Python stdlib modules set (built-in in Python 3.10+)
-    STDLIB_MODULES: Set[str] = set(sys.stdlib_module_names) if hasattr(sys, "stdlib_module_names") else {
-        "os", "sys", "re", "json", "ast", "math", "time", "datetime", "typing", "pathlib",
-        "collections", "itertools", "functools", "unittest", "logging", "urllib", "http",
-        "hashlib", "subprocess", "shutil", "tempfile", "io", "string", "copy", "socket",
+    STDLIB_MODULES: Set[str] = (
+        set(sys.stdlib_module_names)
+        if hasattr(sys, "stdlib_module_names")
+        else {
+            "os",
+            "sys",
+            "re",
+            "json",
+            "ast",
+            "math",
+            "time",
+            "datetime",
+            "typing",
+            "pathlib",
+            "collections",
+            "itertools",
+            "functools",
+            "unittest",
+            "logging",
+            "urllib",
+            "http",
+            "hashlib",
+            "subprocess",
+            "shutil",
+            "tempfile",
+            "io",
+            "string",
+            "copy",
+            "socket",
+        }
+    )
+
+    # Import name != distribution name for these packages.
+    # shortcut: fixed alias table covers the common offenders, extend it when a
+    # false positive is reported.
+    IMPORT_ALIASES = {
+        "yaml": "pyyaml",
+        "cv2": "opencv_python",
+        "pil": "pillow",
+        "bs4": "beautifulsoup4",
+        "skimage": "scikit_image",
+        "sklearn": "scikit_learn",
+        "dateutil": "python_dateutil",
+        "dotenv": "python_dotenv",
+        "jwt": "pyjwt",
+        "serial": "pyserial",
+        "openssl": "pyopenssl",
+        "crypto": "pycryptodome",
+        "usb": "pyusb",
+        "attr": "attrs",
+        "gi": "pygobject",
     }
 
     # Common hallucinated methods on standard library objects
@@ -47,87 +101,162 @@ class PhantomDetector:
         ("os", "mkdir_p"): "os uses os.makedirs(..., exist_ok=True).",
         ("re", "match_all"): "re uses .findall() or .finditer(), not .match_all().",
         ("time", "sleep_async"): "time has no sleep_async; use asyncio.sleep().",
-        ("sys", "print"): "sys has no print method; use builtin print() or sys.stdout.write().",
+        (
+            "sys",
+            "print",
+        ): "sys has no print method; use builtin print() or sys.stdout.write().",
     }
 
     @classmethod
     def get_declared_dependencies(cls, repo_root: Optional[Path] = None) -> Set[str]:
-        """Scans pyproject.toml, requirements.txt, setup.py to extract valid declared packages."""
+        """Scans dependency manifests and local modules to extract valid import names."""
         deps: Set[str] = set()
-        if not repo_root:
-            repo_root = Path.cwd()
+        repo_root = repo_root or Path.cwd()
 
-        # 1. requirements.txt / requirements/*.txt
-        for req_file in repo_root.glob("*requirement*.txt"):
+        # 1. requirements.txt, requirements/*.txt, requirements-*.txt
+        req_files = list(repo_root.glob("*requirement*.txt")) + list(
+            repo_root.glob("requirements/*.txt")
+        )
+        for req_file in req_files:
             try:
-                for line in req_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    line = line.strip().split("#")[0]
-                    if line and not line.startswith(("-", "http", "git+")):
-                        pkg = re.split(r"[><=~!;]", line)[0].strip().replace("-", "_").lower()
-                        if pkg:
-                            deps.add(pkg)
+                cls._read_requirement_lines(
+                    req_file.read_text(encoding="utf-8", errors="ignore"), deps
+                )
             except Exception:
                 pass
 
-        # 2. pyproject.toml
+        # 2. setup.cfg [options] install_requires
+        setup_cfg = repo_root / "setup.cfg"
+        if setup_cfg.exists():
+            try:
+                content = setup_cfg.read_text(encoding="utf-8", errors="ignore")
+                block = re.search(
+                    r"(?ms)^install_requires\s*=\s*\n(.*?)(?=^\S|\Z)", content
+                )
+                if block:
+                    cls._read_requirement_lines(block.group(1), deps)
+            except Exception:
+                pass
+
+        # 3. Pipfile [packages] / [dev-packages]
+        pipfile = repo_root / "Pipfile"
+        if pipfile.exists():
+            try:
+                content = pipfile.read_text(encoding="utf-8", errors="ignore")
+                section = ""
+                for line in content.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("["):
+                        section = stripped.strip("[]").lower()
+                    elif section in ("packages", "dev-packages") and "=" in stripped:
+                        deps.add(_normalize(stripped.split("=")[0].strip(' "')))
+            except Exception:
+                pass
+
+        # 4. pyproject.toml: only dependency sections, not every quoted string
         pyproject = repo_root / "pyproject.toml"
         if pyproject.exists():
             try:
-                content = pyproject.read_text(encoding="utf-8", errors="ignore")
-                # Look for dependencies = [...]
-                for match in re.finditer(r'["\']([a-zA-Z0-9_\-]+)(?:[><=~^!;].*?)?["\']', content):
-                    pkg = match.group(1).replace("-", "_").lower()
-                    deps.add(pkg)
+                cls._read_pyproject(
+                    pyproject.read_text(encoding="utf-8", errors="ignore"), deps
+                )
             except Exception:
                 pass
 
-        # 3. Local repo top-level packages & modules
+        # 5. Local repo top-level packages & modules
         for p in repo_root.glob("*.py"):
             deps.add(p.stem.lower())
-        for p in repo_root.glob("*/__init__.py"):
-            deps.add(p.parent.name.lower())
-        for p in repo_root.glob("src/*/__init__.py"):
-            deps.add(p.parent.name.lower())
+        for pattern in ("*/__init__.py", "src/*.py", "src/*/__init__.py"):
+            for p in repo_root.glob(pattern):
+                deps.add(
+                    p.stem.lower() if p.name != "__init__.py" else p.parent.name.lower()
+                )
 
         return deps
 
     @classmethod
-    def analyze_file(cls, file_diff: FileDiff, declared_deps: Set[str]) -> List[PhantomIncident]:
+    def _read_requirement_lines(cls, text: str, deps: Set[str]):
+        for line in text.splitlines():
+            line = line.strip().split("#")[0]
+            if not line or line.startswith(("-", "http", "git+", "--")):
+                continue
+            pkg = _normalize(line)
+            if pkg:
+                deps.add(pkg)
+
+    @classmethod
+    def _read_pyproject(cls, content: str, deps: Set[str]):
+        section = ""
+        in_deps = False
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                section = stripped.strip("[]").strip()
+                in_deps = False
+                continue
+
+            poetry_deps = section.startswith(
+                (
+                    "tool.poetry.dependencies",
+                    "tool.poetry.dev-dependencies",
+                    "tool.poetry.group",
+                )
+            )
+            dependency_section = (
+                section
+                in (
+                    "project.optional-dependencies",
+                    "dependency-groups",
+                    "build-system",
+                )
+                or poetry_deps
+            )
+            if re.match(r"^dependencies\s*=\s*\[", stripped):
+                in_deps = True
+
+            # Poetry declares packages as bare keys: requests = "^2.31"
+            if poetry_deps and "=" in stripped and not stripped.startswith("#"):
+                key = stripped.split("=")[0].strip().strip("\"'")
+                if key and key != "python":
+                    deps.add(_normalize(key))
+
+            if in_deps or dependency_section:
+                for match in re.finditer(r'["\']([A-Za-z0-9_.\-]+)', stripped):
+                    deps.add(_normalize(match.group(1)))
+
+            if in_deps and "]" in stripped:
+                in_deps = False
+
+    @classmethod
+    def analyze_file(
+        cls, file_diff: FileDiff, declared_deps: Set[str]
+    ) -> List[PhantomIncident]:
         incidents: List[PhantomIncident] = []
         if not file_diff.is_python or file_diff.is_deleted:
             return incidents
 
-        added_code = "\n".join(line for _, line in file_diff.added_lines)
-        if not added_code.strip():
+        fragment = Fragment(file_diff)
+        if not fragment.text.strip():
             return incidents
 
-        # Try AST parsing of added snippets with dedent & stub wrapper for bare returns
-        dedented = textwrap.dedent(added_code)
-        tree = None
-        try:
-            tree = ast.parse(dedented)
-        except SyntaxError:
-            try:
-                stub_code = "def _fragment():\n" + textwrap.indent(dedented, "    ")
-                tree = ast.parse(stub_code)
-            except SyntaxError:
-                tree = None
-
+        tree, offset = fragment.parse()
         if tree is None:
-            # Fallback to regex-based line inspection if fragment is not a complete module
+            # Fallback to regex-based line inspection if fragment is not parseable
             return cls._fallback_regex_scan(file_diff, declared_deps)
 
         for node in ast.walk(tree):
             # Check `import x`
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    top_pkg = alias.name.split(".")[0].replace("-", "_").lower()
+                    top_pkg = alias.name.split(".")[0]
                     if not cls._is_known_package(top_pkg, declared_deps):
                         incidents.append(
                             PhantomIncident(
                                 kind=PhantomKind.HALLUCINATED_IMPORT,
                                 file_path=file_diff.target_path,
-                                line_number=getattr(node, "lineno", 1),
+                                line_number=fragment.real_line(
+                                    getattr(node, "lineno", 1), offset
+                                ),
                                 symbol=alias.name,
                                 message=f"Package '{alias.name}' is not in stdlib, project dependencies, or local modules.",
                             )
@@ -135,14 +264,17 @@ class PhantomDetector:
 
             # Check `from x import y`
             elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    top_pkg = node.module.split(".")[0].replace("-", "_").lower()
+                # Relative imports (from . import x) always resolve inside the package
+                if node.module and not node.level:
+                    top_pkg = node.module.split(".")[0]
                     if not cls._is_known_package(top_pkg, declared_deps):
                         incidents.append(
                             PhantomIncident(
                                 kind=PhantomKind.HALLUCINATED_IMPORT,
                                 file_path=file_diff.target_path,
-                                line_number=getattr(node, "lineno", 1),
+                                line_number=fragment.real_line(
+                                    getattr(node, "lineno", 1), offset
+                                ),
                                 symbol=node.module,
                                 message=f"Module '{node.module}' is not in stdlib, project dependencies, or local modules.",
                             )
@@ -159,7 +291,9 @@ class PhantomDetector:
                             PhantomIncident(
                                 kind=PhantomKind.HALLUCINATED_STDLIB_METHOD,
                                 file_path=file_diff.target_path,
-                                line_number=getattr(node, "lineno", 1),
+                                line_number=fragment.real_line(
+                                    getattr(node, "lineno", 1), offset
+                                ),
                                 symbol=f"{mod_name}.{attr_name}",
                                 message=cls.KNOWN_STDLIB_HALLUCINATIONS[key],
                             )
@@ -169,18 +303,29 @@ class PhantomDetector:
 
     @classmethod
     def _is_known_package(cls, pkg_name: str, declared_deps: Set[str]) -> bool:
-        pkg_clean = pkg_name.replace("-", "_").lower()
+        pkg_clean = _normalize(pkg_name)
         if pkg_clean in cls.STDLIB_MODULES:
             return True
         if pkg_clean in declared_deps:
             return True
+        alias = cls.IMPORT_ALIASES.get(pkg_clean)
+        if alias and alias in declared_deps:
+            return True
         # Common build / test tooling usually injected by CI
-        if pkg_clean in {"pytest", "unittest", "setuptools", "wheel", "typing_extensions"}:
+        if pkg_clean in {
+            "pytest",
+            "unittest",
+            "setuptools",
+            "wheel",
+            "typing_extensions",
+        }:
             return True
         return False
 
     @classmethod
-    def _fallback_regex_scan(cls, file_diff: FileDiff, declared_deps: Set[str]) -> List[PhantomIncident]:
+    def _fallback_regex_scan(
+        cls, file_diff: FileDiff, declared_deps: Set[str]
+    ) -> List[PhantomIncident]:
         incidents: List[PhantomIncident] = []
         for ln, line in file_diff.added_lines:
             stripped = line.strip()
@@ -199,7 +344,7 @@ class PhantomDetector:
             # import foo
             m = re.match(r"^import\s+([a-zA-Z0-9_\.]+)", stripped)
             if m:
-                top_pkg = m.group(1).split(".")[0].lower()
+                top_pkg = m.group(1).split(".")[0]
                 if not cls._is_known_package(top_pkg, declared_deps):
                     incidents.append(
                         PhantomIncident(
@@ -210,10 +355,10 @@ class PhantomDetector:
                             message=f"Package '{m.group(1)}' is not in stdlib, project dependencies, or local modules.",
                         )
                     )
-            # from foo import bar
+            # from foo import bar (relative imports are skipped)
             m2 = re.match(r"^from\s+([a-zA-Z0-9_\.]+)\s+import", stripped)
             if m2:
-                top_pkg = m2.group(1).split(".")[0].lower()
+                top_pkg = m2.group(1).split(".")[0]
                 if not cls._is_known_package(top_pkg, declared_deps):
                     incidents.append(
                         PhantomIncident(

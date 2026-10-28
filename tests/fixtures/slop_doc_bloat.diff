@@ -3,7 +3,7 @@ diff --git a/src/core.py b/src/core.py
 +++ b/src/core.py
 @@ -1,5 +1,45 @@
  def run_job(job_id: str):
-+    \"\"\"
++    """
 +    Comprehensive enterprise job orchestrator and high-velocity workflow executor.
 +    
 +    Overview:
@@ -32,7 +32,7 @@ diff --git a/src/core.py b/src/core.py
 +        JobExecutionError: When downstream workers reject the pipeline.
 +        InvalidTokenException: If authentication context is missing.
 +        TimeoutError: If execution exceeds configured SLA deadlines.
-+    \"\"\"
++    """
 +    if not job_id:
 +        return False
      return True

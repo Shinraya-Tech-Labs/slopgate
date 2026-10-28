@@ -5,18 +5,36 @@ PR review comments, and structured JSON.
 """
 
 import json
-from typing import Optional
+import os
+import sys
+
 from slopgate.engine import AuditReport, Severity
 
 
+def _color(code: str) -> str:
+    """Disables ANSI when piping output or when NO_COLOR is set."""
+    if os.environ.get("NO_COLOR"):
+        return ""
+    stream = sys.stdout
+    return code if stream is not None and stream.isatty() else ""
+
+
 class AnsiColor:
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    CYAN = "\033[36m"
-    GRAY = "\033[90m"
+    RESET = _color("\033[0m")
+    BOLD = _color("\033[1m")
+    RED = _color("\033[31m")
+    GREEN = _color("\033[32m")
+    YELLOW = _color("\033[33m")
+    CYAN = _color("\033[36m")
+    GRAY = _color("\033[90m")
+
+
+def _escape_data(value: str) -> str:
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_property(value: str) -> str:
+    return _escape_data(value).replace(":", "%3A").replace(",", "%2C")
 
 
 class Reporter:
@@ -26,22 +44,32 @@ class Reporter:
     def render_terminal(cls, report: AuditReport) -> str:
         lines = []
         # Header Box
-        lines.append(f"{AnsiColor.CYAN}======================================================={AnsiColor.RESET}")
-        lines.append(f"{AnsiColor.BOLD}{AnsiColor.CYAN} 🛡️  SLOPGATE — Code & PR Integrity Shield {AnsiColor.RESET}")
-        lines.append(f"{AnsiColor.CYAN}======================================================={AnsiColor.RESET}")
+        lines.append(
+            f"{AnsiColor.CYAN}======================================================={AnsiColor.RESET}"
+        )
+        lines.append(
+            f"{AnsiColor.BOLD}{AnsiColor.CYAN} 🛡️  SLOPGATE — Code & PR Integrity Shield {AnsiColor.RESET}"
+        )
+        lines.append(
+            f"{AnsiColor.CYAN}======================================================={AnsiColor.RESET}"
+        )
 
         # Metrics
         m = report.metrics
-        lines.append(f" {AnsiColor.GRAY}Diff:{AnsiColor.RESET} {m.files_changed} files | "
-                     f"{AnsiColor.GREEN}+{m.total_added}{AnsiColor.RESET} / "
-                     f"{AnsiColor.RED}-{m.total_removed}{AnsiColor.RESET} | "
-                     f"Code: +{m.code_added} | Tests: +{m.test_added} | Docs: +{m.doc_added}")
+        lines.append(
+            f" {AnsiColor.GRAY}Diff:{AnsiColor.RESET} {m.files_changed} files | "
+            f"{AnsiColor.GREEN}+{m.total_added}{AnsiColor.RESET} / "
+            f"{AnsiColor.RED}-{m.total_removed}{AnsiColor.RESET} | "
+            f"Code: +{m.code_added} | Tests: +{m.test_added} | Docs: +{m.doc_added}"
+        )
 
         # Status
         if report.status == Severity.BLOCKED:
             status_badge = f"{AnsiColor.BOLD}{AnsiColor.RED}[BLOCKED]{AnsiColor.RESET}"
         elif report.status == Severity.WARNING:
-            status_badge = f"{AnsiColor.BOLD}{AnsiColor.YELLOW}[WARNING]{AnsiColor.RESET}"
+            status_badge = (
+                f"{AnsiColor.BOLD}{AnsiColor.YELLOW}[WARNING]{AnsiColor.RESET}"
+            )
         else:
             status_badge = f"{AnsiColor.BOLD}{AnsiColor.GREEN}[PASSED]{AnsiColor.RESET}"
 
@@ -52,17 +80,29 @@ class Reporter:
         if report.violations:
             lines.append(f"{AnsiColor.BOLD}Violations Detected:{AnsiColor.RESET}")
             for v in report.violations:
-                color = AnsiColor.RED if v.severity == Severity.BLOCKED else AnsiColor.YELLOW
-                lines.append(f"  • {color}[{v.rule_id}]{AnsiColor.RESET} {AnsiColor.BOLD}{v.title}{AnsiColor.RESET}")
+                color = (
+                    AnsiColor.RED
+                    if v.severity == Severity.BLOCKED
+                    else AnsiColor.YELLOW
+                )
+                lines.append(
+                    f"  • {color}[{v.rule_id}]{AnsiColor.RESET} {AnsiColor.BOLD}{v.title}{AnsiColor.RESET}"
+                )
                 lines.append(f"    Location: {v.file_path}:{v.line_number}")
                 lines.append(f"    Details:  {v.message}")
                 if v.snippet:
-                    lines.append(f"    Snippet:  {AnsiColor.GRAY}{v.snippet}{AnsiColor.RESET}")
+                    lines.append(
+                        f"    Snippet:  {AnsiColor.GRAY}{v.snippet}{AnsiColor.RESET}"
+                    )
                 lines.append("")
         else:
-            lines.append(f"  {AnsiColor.GREEN}✨ Zero integrity violations found. Clean PR!{AnsiColor.RESET}\n")
+            lines.append(
+                f"  {AnsiColor.GREEN}✨ Zero integrity violations found. Clean PR!{AnsiColor.RESET}\n"
+            )
 
-        lines.append(f"{AnsiColor.CYAN}-------------------------------------------------------{AnsiColor.RESET}")
+        lines.append(
+            f"{AnsiColor.CYAN}-------------------------------------------------------{AnsiColor.RESET}"
+        )
         return "\n".join(lines)
 
     @classmethod
@@ -84,8 +124,8 @@ class Reporter:
             callout,
             "",
             "### 📊 Diff Metrics",
-            f"| Metric | Value |",
-            f"| --- | --- |",
+            "| Metric | Value |",
+            "| --- | --- |",
             f"| **Files Changed** | `{report.metrics.files_changed}` |",
             f"| **Logic Added** | `+{report.metrics.code_added}` lines |",
             f"| **Tests Added** | `+{report.metrics.test_added}` lines |",
@@ -95,18 +135,26 @@ class Reporter:
         ]
 
         if report.violations:
-            lines.extend([
-                "### 🔍 Integrity Findings",
-                "| Severity | Rule | File & Line | Message |",
-                "| :---: | :---: | :--- | :--- |",
-            ])
+            lines.extend(
+                [
+                    "### 🔍 Integrity Findings",
+                    "| Severity | Rule | File & Line | Message |",
+                    "| :---: | :---: | :--- | :--- |",
+                ]
+            )
             for v in report.violations:
-                sev_icon = "⛔ `BLOCKED`" if v.severity == Severity.BLOCKED else "⚠️ `WARNING`"
-                lines.append(f"| {sev_icon} | `{v.rule_id}` | `{v.file_path}:{v.line_number}` | {v.message} |")
+                sev_icon = (
+                    "⛔ `BLOCKED`" if v.severity == Severity.BLOCKED else "⚠️ `WARNING`"
+                )
+                lines.append(
+                    f"| {sev_icon} | `{v.rule_id}` | `{v.file_path}:{v.line_number}` | {v.message} |"
+                )
 
-            lines.append("")
-            lines.append("---")
-            lines.append("*Protected by [SlopGate](https://github.com/Shinraya-Tech-Labs/slopgate) — The AST Code Integrity Shield for Open Source.*")
+        lines.append("")
+        lines.append("---")
+        lines.append(
+            "*Protected by [SlopGate](https://github.com/Shinraya-Tech-Labs/slopgate) — The AST Code Integrity Shield for Open Source.*"
+        )
 
         return "\n".join(lines)
 
@@ -116,7 +164,12 @@ class Reporter:
         lines = []
         for v in report.violations:
             cmd = "error" if v.severity == Severity.BLOCKED else "warning"
-            lines.append(f"::{cmd} file={v.file_path},line={v.line_number},title={v.title}::{v.message}")
+            props = (
+                f"file={_escape_property(v.file_path)},"
+                f"line={v.line_number},"
+                f"title={_escape_property(v.title)}"
+            )
+            lines.append(f"::{cmd} {props}::{_escape_data(v.message)}")
         return "\n".join(lines)
 
     @classmethod
@@ -124,6 +177,7 @@ class Reporter:
         data = {
             "status": report.status.value,
             "is_clean": report.is_clean,
+            "not_blocked": report.not_blocked,
             "summary": report.summary,
             "repro_verified": report.repro_verified,
             "metrics": {
