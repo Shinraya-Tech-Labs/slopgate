@@ -93,6 +93,50 @@ def test_install_writes_workflow(monkeypatch, capsys, tmp_path):
     capsys.readouterr()
 
 
+def test_install_template_pins_released_action_tag(monkeypatch, capsys, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    assert _main(monkeypatch, ["install"]) == 0
+    text = (tmp_path / ".github" / "workflows" / "slopgate.yml").read_text(
+        encoding="utf-8"
+    )
+    assert f"Shinraya-Tech-Labs/slopgate@v{cli.__version__}" in text
+    assert "pull-requests: write" not in text
+    capsys.readouterr()
+
+
+def test_python_dash_m_entry_point():
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    env.pop("GITHUB_ACTIONS", None)
+    result = subprocess.run(
+        [sys.executable, "-m", "slopgate", "--version"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0
+    assert cli.__version__ in result.stdout
+
+
+def test_git_diff_prefers_pr_base_sha(monkeypatch):
+    calls = []
+
+    class Result:
+        stdout = ""
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return Result()
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    monkeypatch.setenv("SLOPGATE_BASE_SHA", "abc123")
+    monkeypatch.setenv("GITHUB_BASE_REF", "main")
+
+    assert cli.get_git_diff() == ""
+    assert calls[0] == ["git", "diff", "abc123...HEAD"]
+    assert calls[1] == ["git", "diff", "abc123", "HEAD"]
+    assert calls[2] == ["git", "diff", "origin/main...HEAD"]
+
+
 def test_version_flag(monkeypatch, capsys):
     assert _main(monkeypatch, ["--version"]) == 0
     capsys.readouterr()

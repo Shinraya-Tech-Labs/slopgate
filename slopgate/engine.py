@@ -167,11 +167,22 @@ class AuditEngine:
         # Repro Test Check: a test file must have been touched and not tampered with
         repro_verified = has_code_change and has_test_change and not tampered_test
         if has_code_change and not repro_verified:
+            changed_prod = next(
+                (
+                    f
+                    for f in files
+                    if f.is_python
+                    and not f.is_test_file
+                    and not f.is_deleted
+                    and f.added_lines
+                ),
+                None,
+            )
             violations.append(
                 Violation(
                     rule_id="SG-MISSING_TEST_REPRO",
                     severity=Severity.WARNING,
-                    file_path="tests/",
+                    file_path=changed_prod.target_path if changed_prod else "diff",
                     line_number=1,
                     title="Missing Reproduction Test",
                     message="PR modifies production logic without adding a trustworthy test case.",

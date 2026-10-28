@@ -71,6 +71,21 @@ def test_slop_doc_bloat_fixture_is_flagged():
     assert report.status == Severity.WARNING
 
 
+def test_missing_repro_points_at_the_production_file():
+    diff_text = """diff --git a/src/auth.py b/src/auth.py
+--- a/src/auth.py
++++ b/src/auth.py
+@@ -1,1 +1,2 @@
++def login():
++    pass
+"""
+    report = AuditEngine().audit_diff(diff_text)
+    violation = next(
+        v for v in report.violations if v.rule_id == "SG-MISSING_TEST_REPRO"
+    )
+    assert violation.file_path == "src/auth.py"
+
+
 def test_deleted_test_file_is_not_a_reproduction():
     diff_text = """diff --git a/src/auth.py b/src/auth.py
 --- a/src/auth.py

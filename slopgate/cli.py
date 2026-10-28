@@ -25,7 +25,7 @@ from slopgate import __version__
 from slopgate.engine import AuditEngine, Severity
 from slopgate.reporter import AnsiColor, Reporter
 
-GITHUB_WORKFLOW_TEMPLATE = """name: SlopGate PR Integrity Check
+GITHUB_WORKFLOW_TEMPLATE = f"""name: SlopGate PR Integrity Check
 
 on:
   pull_request:
@@ -33,7 +33,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   slopgate-audit:
@@ -46,7 +45,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run SlopGate Integrity Check
-        uses: Shinraya-Tech-Labs/slopgate@main
+        uses: Shinraya-Tech-Labs/slopgate@v{__version__}
         with:
           fail-on: blocked
 """
@@ -106,9 +105,19 @@ index 5678901..cdef0123 100644
 
 
 def get_git_diff() -> str:
-    """Gets git diff against GITHUB_BASE_REF, origin/main, master, or working tree."""
+    """Gets git diff against SLOPGATE_BASE_SHA, GITHUB_BASE_REF, origin/main, or working tree."""
+    base_sha = os.environ.get("SLOPGATE_BASE_SHA")
     base_ref = os.environ.get("GITHUB_BASE_REF")
     cmds = []
+    if base_sha:
+        # The action passes the PR base commit: it always exists after checkout,
+        # unlike origin/<branch>, which shallow or unusual checkouts may omit.
+        cmds.extend(
+            [
+                ["git", "diff", f"{base_sha}...HEAD"],
+                ["git", "diff", base_sha, "HEAD"],
+            ]
+        )
     if base_ref:
         cmds.extend(
             [
