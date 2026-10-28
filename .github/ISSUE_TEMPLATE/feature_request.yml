@@ -1,0 +1,21 @@
+name: Feature Request
+description: Propose a new AST invariant check, rule, or ecosystem adapter
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Have an idea for catching a new class of AI slop or test tampering?
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Explain the PR anti-pattern or pain point.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution / Rule Logic
+      description: How should SlopGate detect this via AST or diff heuristics?
+    validations:
+      required: true

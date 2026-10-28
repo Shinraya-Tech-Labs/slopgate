@@ -1,0 +1,10 @@
+diff --git a/src/api.py b/src/api.py
+--- a/src/api.py
++++ b/src/api.py
+@@ -3,2 +3,4 @@
+ import sys
++import non_existent_ai_cloud_sdk
++from fake_crypto import super_hash
+ 
+ def ping():
+     return "pong"

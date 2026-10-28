@@ -1,0 +1,18 @@
+diff --git a/src/math_utils.py b/src/math_utils.py
+--- a/src/math_utils.py
++++ b/src/math_utils.py
+@@ -10,3 +10,5 @@ def safe_sqrt(x: float) -> float:
+     if x < 0:
+-        return 0.0
++        raise ValueError("Cannot calculate square root of negative number")
+     return x ** 0.5
+diff --git a/tests/test_math_utils.py b/tests/test_math_utils.py
+--- a/tests/test_math_utils.py
++++ b/tests/test_math_utils.py
+@@ -15,3 +15,7 @@ def test_safe_sqrt_positive():
+     assert safe_sqrt(16) == 4.0
++
++def test_safe_sqrt_negative_repro():
++    import pytest
++    with pytest.raises(ValueError, match="negative number"):
++        safe_sqrt(-4)

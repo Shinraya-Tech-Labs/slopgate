@@ -1,0 +1,29 @@
+name: Bug Report
+description: Report a false positive, false negative, or runtime error in SlopGate
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping maintain SlopGate! Please provide details below.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe what SlopGate did versus what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: diff
+    attributes:
+      label: PR Diff or Code Snippet
+      description: Provide the git diff or snippet that triggered the issue.
+      render: diff
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SlopGate Version
+      placeholder: "e.g. 0.1.0"
+    validations:
+      required: true

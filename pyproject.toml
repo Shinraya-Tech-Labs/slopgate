@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slopgate"
+version = "0.1.0"
+description = "🛡️ AST-based code integrity, test tamper detection, and phantom symbol interception for GitHub Pull Requests."
+readme = "README.md"
+authors = [
+    { name = "Shinraya Tech Labs", email = "labs@shinraya.com" }
+]
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Bug Tracking",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+]
+
+[project.scripts]
+slopgate = "slopgate.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Shinraya-Tech-Labs/slopgate"
+Repository = "https://github.com/Shinraya-Tech-Labs/slopgate.git"
+Issues = "https://github.com/Shinraya-Tech-Labs/slopgate/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["slopgate*"]
