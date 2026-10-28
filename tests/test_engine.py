@@ -115,7 +115,7 @@ deleted file mode 100644
     assert any(v.rule_id == "SG-TEST_FILE_DELETED" for v in report.violations)
 
 
-def test_test_file_without_assertions_is_not_a_reproduction():
+def test_new_test_file_without_assertions_blocks():
     diff_text = """diff --git a/src/store.py b/src/store.py
 --- a/src/store.py
 +++ b/src/store.py
@@ -131,9 +131,32 @@ new file mode 100644
 +
 +
 +def test_reset():
++"""
+    report = AuditEngine().audit_diff(diff_text)
+    assert not report.repro_verified
+    assert report.status == Severity.BLOCKED
+    assert any(v.rule_id == "SG-VACUOUS_TEST" for v in report.violations)
+
+
+def test_modified_test_without_assertions_is_not_a_reproduction():
+    diff_text = """diff --git a/src/store.py b/src/store.py
+--- a/src/store.py
++++ b/src/store.py
+@@ -1,1 +1,2 @@
++def reset():
++    pass
+diff --git a/tests/test_store.py b/tests/test_store.py
+--- a/tests/test_store.py
++++ b/tests/test_store.py
+@@ -1,3 +1,3 @@
+-def test_reset():
++def test_reset_call():
+     store = Store()
++    store.reset()
 """
     report = AuditEngine().audit_diff(diff_text)
     assert not report.repro_verified
+    assert report.status == Severity.WARNING
     assert any(v.rule_id == "SG-MISSING_TEST_REPRO" for v in report.violations)
 
 
@@ -207,3 +230,27 @@ def test_github_annotations_escape_special_characters():
     assert "file=src/a%2Cb.py" in annotations
     assert "title=Title%3A with commas%2C here" in annotations
     assert "line one%0Aline two, with 100%25 coverage" in annotations
+
+
+def test_dependency_declared_by_the_same_pr_does_not_whitelist_silently(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["requests", "hallucinated-sdk>=1.0"]\n',
+        encoding="utf-8",
+    )
+    diff_text = """diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,2 +1,2 @@
+ [project]
+-dependencies = ["requests"]
++dependencies = ["requests", "hallucinated-sdk>=1.0"]
+diff --git a/src/agent.py b/src/agent.py
+--- a/src/agent.py
++++ b/src/agent.py
+@@ -1,1 +1,2 @@
++from hallucinated_sdk import Agent
+"""
+    report = AuditEngine(repo_root=tmp_path).audit_diff(diff_text)
+    assert report.status == Severity.WARNING
+    assert any(v.rule_id == "SG-SELF_DECLARED_DEPENDENCY" for v in report.violations)
+    assert not any(v.rule_id == "SG-HALLUCINATED_IMPORT" for v in report.violations)

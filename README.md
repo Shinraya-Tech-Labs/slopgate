@@ -86,7 +86,7 @@ Run `slopgate demo` to see SlopGate catch 3 real-world scenarios in real-time:
 
 ```text
 =======================================================
- 🎮 SLOPGATE INTERACTIVE AUDIT SIMULATOR v0.1.0
+ 🎮 SLOPGATE INTERACTIVE AUDIT SIMULATOR v0.1.2
 =======================================================
 
 Scenario 1: Rogue AI PR weakens test assertion to pass CI
@@ -95,13 +95,17 @@ Simulating: Contributor PR replaces 'assert val == False' with 'assert val is no
  🛡️  SLOPGATE — Code & PR Integrity Shield 
 =======================================================
  Diff: 2 files | +2 / -1 | Code: +0 | Tests: +1 | Docs: +1
- Status: [WARNING] ⚠️ SlopGate Warning: Found 1 non-blocking notice(s).
+ Status: [BLOCKED] ⛔ SlopGate Blocked: Found 1 critical integrity violation(s) (test tampering / phantom symbols).
 
 Violations Detected:
   • [SG-ASSERT_WEAKENED] Assert Weakened
     Location: tests/test_auth.py:14
     Details:  Weakened assertion: 'is not None' checks existence instead of value equivalence.
     Snippet:  assert verify_token("expired_xyz") is not None
+
+  • [SG-MISSING_TEST_REPRO] Missing Reproduction Test
+    Location: src/auth.py:1
+    Details:  PR modifies production logic without adding a trustworthy test case.
 
 -------------------------------------------------------
 Scenario 2: AI PR with phantom packages and hallucinated stdlib APIs
@@ -110,18 +114,41 @@ Simulating: PR imports 'phantom_ai_driver' and calls 'json.loads_async()'...
  🛡️  SLOPGATE — Code & PR Integrity Shield 
 =======================================================
  Diff: 1 files | +3 / -1 | Code: +3 | Tests: +0 | Docs: +0
- Status: [BLOCKED] ⛔ SlopGate Blocked: Found 2 critical integrity violation(s).
+ Status: [BLOCKED] ⛔ SlopGate Blocked: Found 3 critical integrity violation(s) (test tampering / phantom symbols).
 
 Violations Detected:
   • [SG-HALLUCINATED_IMPORT] Hallucinated Import
     Location: src/database.py:5
-    Details:  Package 'phantom_ai_driver' is not in stdlib, project dependencies, or local modules.
+    Details:  Module 'phantom_ai_driver' is not in stdlib, project dependencies, or local modules.
     Snippet:  symbol: phantom_ai_driver
+
+  • [SG-HALLUCINATED_IMPORT] Hallucinated Import
+    Location: src/database.py:6
+    Details:  Module 'hallucinated_orm' is not in stdlib, project dependencies, or local modules.
+    Snippet:  symbol: hallucinated_orm
 
   • [SG-HALLUCINATED_STDLIB_METHOD] Hallucinated Stdlib Method
     Location: src/database.py:9
     Details:  json has no async loads method.
     Snippet:  symbol: json.loads_async
+
+  • [SG-MISSING_TEST_REPRO] Missing Reproduction Test
+    Location: src/database.py:1
+    Details:  PR modifies production logic without adding a trustworthy test case.
+
+-------------------------------------------------------
+Scenario 3: Genuine human bugfix with reproduction test case
+Simulating: Legitimate PR fixing ZeroDivisionError with reproduction test...
+=======================================================
+ 🛡️  SLOPGATE — Code & PR Integrity Shield 
+=======================================================
+ Diff: 2 files | +7 / -0 | Code: +2 | Tests: +5 | Docs: +0
+ Status: [PASSED] ✅ SlopGate Passed: All test assertions intact, no hallucinated symbols detected.
+
+  ✨ Zero integrity violations found. Clean PR!
+
+-------------------------------------------------------
+✓ Simulator completed: 2 rogue AI PR(s) intercepted, 1 clean bugfix approved.
 ```
 
 ---
@@ -184,17 +211,20 @@ slopgate install
 
 ### 1. Test Tampering & Neutering Guard
 Detects when a pull request attempts to pass failing CI by:
-- Deleting `assert` statements in existing test files.
+- Deleting `assert` statements in existing test files, or deleting the test file.
 - Replacing strict comparisons (`assert x == 42`) with tautologies (`assert x is not None` or `assert True` or `assert len(x) >= 0`).
+- Masking a removed value comparison behind a bare truthiness check (`assert cart`).
 - Wrapping failing assertions in silent `try: ... except: pass` blocks.
 - Explicitly adding `@pytest.mark.skip` to failing tests.
 
 ### 2. Phantom Symbol & Hallucinated Import Detector
 - Intercepts newly added `import <package>` that does not exist in standard library, project manifests (`pyproject.toml`, `requirements.txt`), or local modules.
 - Intercepts made-up standard library methods (e.g. `json.loads_async`, `os.mkdir_p`, `re.match_all`).
+- Warns when the imported package is declared *by the same PR* — a diff cannot silently whitelist a package it invents.
 
 ### 3. Reproduction Gate
 - Checks if a pull request modifies core production logic without adding or updating a test.
+- A new test file that defines tests but asserts nothing is a placeholder, not a reproduction: it blocks.
 - Reminds the author: *"Please supply a reproduction test verifying the bug before this patch."*
 
 ### 4. Slop-to-Logic Ratio

@@ -29,6 +29,9 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package version v$VERSION"
             exit 1
           }
+      - name: Verify changelog entry
+        # Fail before publishing if CHANGELOG.md has no section for this tag.
+        run: python scripts/changelog_section.py --require "$GITHUB_REF_NAME"
       - name: Build Package
         run: |
           python -m pip install --upgrade pip build twine
@@ -76,13 +79,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Download distributions
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: dist
           path: dist
+      - name: Extract release notes from CHANGELOG
+        run: python3 scripts/changelog_section.py "$GITHUB_REF_NAME" > notes.md
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          name: SlopGate ${{ github.ref_name }}
+          body_path: notes.md
           files: dist/*
-          generate_release_notes: true

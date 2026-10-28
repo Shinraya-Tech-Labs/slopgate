@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-28
+
+### Added
+
+- **`SG-VACUOUS_TEST` (blocked):** a new test file that defines tests but
+  contains no assertion (`assert`, `pytest.raises`, `self.assert*`, or a
+  `mock.assert_*` call) is a placeholder, not a reproduction.
+- **`SG-SELF_DECLARED_DEPENDENCY` (warning):** the import is served only by a
+  dependency this same PR adds to a manifest. A diff can no longer silently
+  whitelist a package it invents.
+
+### Fixed
+
+- **Assertion masking:** withdrawing a value comparison (`assert total == 30`)
+  and adding a bare truthiness check (`assert cart`) is reported as
+  `SG-ASSERT_WEAKENED`, even when the file's net assert count stays flat.
+- **Release notes** now come from `CHANGELOG.md`; the build job refuses to
+  publish a tag with no changelog section, and the GitHub Release is no longer
+  created with an empty auto-generated body.
+- README demo output regenerated from the current engine.
+
 ## [0.1.2] - 2026-10-28
 
 ### Fixed

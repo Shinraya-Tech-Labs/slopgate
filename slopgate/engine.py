@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from slopgate.ast_tamper import AstTamperAnalyzer, TamperKind
 from slopgate.diff_parser import DiffParser, FileDiff
-from slopgate.phantom import PhantomDetector
+from slopgate.phantom import PhantomDetector, PhantomKind
 
 
 class Severity(str, Enum):
@@ -63,15 +63,18 @@ class AuditReport:
 
 QUOTE_DELIMS = ('"""', "'''")
 
-# A test that adds no assertion is a skeleton, not a reproduction.
-ASSERTION_HINTS = ("assert ", "assert(", "self.assert")
+# A test that adds no assertion is a skeleton, not a reproduction. The bare
+# "assert" token also matches helpers (self.assertEqual, mock.assert_called_once).
+ASSERTION_HINTS = ("assert", "pytest.raises", "assertRaises")
+TEST_DEF_RE = re.compile(r"^\s*(?:async\s+)?def\s+test|^\s*class\s+Test")
 
 
 def adds_assertion(lines: List[Tuple[int, str]]) -> bool:
-    return any(
-        line.strip().startswith(ASSERTION_HINTS) or "pytest.raises" in line
-        for _, line in lines
-    )
+    return any(any(hint in line for hint in ASSERTION_HINTS) for _, line in lines)
+
+
+def defines_test(lines: List[Tuple[int, str]]) -> bool:
+    return any(TEST_DEF_RE.match(line) for _, line in lines)
 
 
 def classify_added_python_lines(lines: List[Tuple[int, str]]) -> Tuple[int, int]:
@@ -120,10 +123,12 @@ class AuditEngine:
         files = DiffParser.parse(diff_text)
         violations: List[Violation] = []
         metrics = self._compute_metrics(files)
+        self_declared = PhantomDetector.added_dependencies(files, self.declared_deps)
 
         has_code_change = False
         has_test_change = False
         tampered_test = False
+        vacuous_test = False
 
         for f in files:
             if f.is_test_file and f.is_deleted:
@@ -145,6 +150,21 @@ class AuditEngine:
                 # a reproduction, even though it is a "test change".
                 if adds_assertion(f.added_lines):
                     has_test_change = True
+                elif f.is_new and defines_test(f.added_lines):
+                    # A brand-new test file with tests in it and no assertion
+                    # anywhere is a placeholder, not a test.
+                    vacuous_test = True
+                    violations.append(
+                        Violation(
+                            rule_id="SG-VACUOUS_TEST",
+                            severity=Severity.BLOCKED,
+                            file_path=f.target_path,
+                            line_number=1,
+                            title="Vacuous Test",
+                            message="New test file defines tests but asserts nothing (assert / pytest.raises / self.assert*).",
+                            snippet=None,
+                        )
+                    )
                 # Run Test Tampering Inspection
                 incidents = AstTamperAnalyzer.analyze_file(f)
                 for inc in incidents:
@@ -177,12 +197,19 @@ class AuditEngine:
 
             # Run Phantom Symbol Inspection on all Python files
             if f.is_python:
-                phantoms = PhantomDetector.analyze_file(f, self.declared_deps)
+                phantoms = PhantomDetector.analyze_file(
+                    f, self.declared_deps, self_declared
+                )
                 for ph in phantoms:
                     violations.append(
                         Violation(
                             rule_id=f"SG-{ph.kind.value}",
-                            severity=Severity.BLOCKED,
+                            # A self-declared dependency is suspicious, not proof.
+                            severity=(
+                                Severity.WARNING
+                                if ph.kind is PhantomKind.SELF_DECLARED_DEPENDENCY
+                                else Severity.BLOCKED
+                            ),
                             file_path=ph.file_path,
                             line_number=ph.line_number,
                             title=ph.kind.value.replace("_", " ").title(),
@@ -193,7 +220,7 @@ class AuditEngine:
 
         # Repro Test Check: a test file must have been touched and not tampered with
         repro_verified = has_code_change and has_test_change and not tampered_test
-        if has_code_change and not repro_verified:
+        if has_code_change and not repro_verified and not vacuous_test:
             changed_prod = next(
                 (
                     f

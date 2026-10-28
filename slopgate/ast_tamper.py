@@ -65,6 +65,7 @@ class AstTamperAnalyzer:
             return incidents
 
         cls._check_assert_deletions(file_diff, incidents)
+        cls._check_weak_replacements(file_diff, incidents)
 
         # 2. Check for Weakened Assertions / Tautologies in newly added lines using AST
         covered = Fragment(file_diff).string_lines()
@@ -122,6 +123,76 @@ class AstTamperAnalyzer:
                     snippet=line.strip(),
                 )
             )
+
+    @classmethod
+    def _check_weak_replacements(
+        cls, file_diff: FileDiff, incidents: List[TamperIncident]
+    ):
+        """Catches masking: delete a value comparison, add a truthiness check.
+
+        Net assert counts can stay flat while the check itself is gutted, e.g.
+        ``-assert price == 10`` in one test and ``+assert cart`` in another.
+        Only fires when *every* assertion the diff adds is weaker than the value
+        comparisons it removed, so a PR that also adds a real comparison is clean.
+        """
+        removed = [
+            line
+            for hunk in file_diff.hunks
+            for _, line in cls._assert_lines(hunk.removed)
+        ]
+        if not any(cls._assert_compares(line) for line in removed):
+            return
+        added = cls._assert_lines(file_diff.added_lines)
+        if not added or any(cls._assert_compares(line) for _, line in added):
+            return
+        weak = [(ln, line) for ln, line in added if cls._is_weak_assert(line)]
+        if not weak:
+            return
+        for ln, line in weak:
+            incidents.append(
+                TamperIncident(
+                    kind=TamperKind.ASSERT_WEAKENED,
+                    file_path=file_diff.target_path,
+                    line_number=ln,
+                    message="Assertion weakened to a truthiness check while a value comparison was removed.",
+                    snippet=line.strip(),
+                )
+            )
+
+    @staticmethod
+    def _assert_node(line: str) -> Optional[ast.Assert]:
+        try:
+            node = ast.parse(line.strip()).body[0]
+        except (SyntaxError, IndexError):
+            return None
+        return node if isinstance(node, ast.Assert) else None
+
+    @classmethod
+    def _assert_compares(cls, line: str) -> bool:
+        node = cls._assert_node(line)
+        return node is not None and any(
+            isinstance(child, ast.Compare) for child in ast.walk(node.test)
+        )
+
+    @classmethod
+    def _is_weak_assert(cls, line: str) -> bool:
+        """`assert x`, `assert x.y`, `assert not x`, `assert f()` — no value check.
+
+        `self.assertIn(...)` / `assert_equal(...)` are real helpers, not weak.
+        """
+        node = cls._assert_node(line)
+        if node is None:
+            return False
+        test = node.test
+        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+            test = test.operand
+        if isinstance(test, ast.Call):
+            func = test.func
+            if isinstance(func, ast.Attribute) and func.attr.startswith("assert"):
+                return False
+            if isinstance(func, ast.Name) and func.id.startswith("assert"):
+                return False
+        return isinstance(test, (ast.Name, ast.Attribute, ast.Call))
 
     @classmethod
     def _assert_lines(cls, lines: List[Tuple[int, str]]) -> List[Tuple[int, str]]:

@@ -202,3 +202,48 @@ def test_xfail_and_expected_failure_are_skips():
             " def test_x():\n"
         )
         assert any(inc.kind == TamperKind.TEST_SKIPPED for inc in _incidents(diff_text))
+
+
+def test_truthiness_replacement_after_removed_comparison_is_weakened():
+    diff_text = """diff --git a/tests/test_cart.py b/tests/test_cart.py
+--- a/tests/test_cart.py
++++ b/tests/test_cart.py
+@@ -10,2 +10,2 @@ def test_total():
+-    assert cart.total() == 30
++    assert cart
+"""
+    kinds = [inc.kind for inc in _incidents(diff_text)]
+    assert TamperKind.ASSERT_WEAKENED in kinds
+
+
+def test_truthiness_assert_without_removed_comparison_is_clean():
+    diff_text = """diff --git a/tests/test_cart.py b/tests/test_cart.py
+--- a/tests/test_cart.py
++++ b/tests/test_cart.py
+@@ -10,1 +10,2 @@ def test_total():
+     assert cart.total() == 30
++    assert cart.items
+"""
+    assert _incidents(diff_text) == []
+
+
+def test_assert_helper_is_not_weakened():
+    diff_text = """diff --git a/tests/test_cart.py b/tests/test_cart.py
+--- a/tests/test_cart.py
++++ b/tests/test_cart.py
+@@ -10,2 +10,2 @@ def test_total():
+-    assert cart.total() == 30
++    self.assertIn("apple", cart.items)
+"""
+    assert _incidents(diff_text) == []
+
+
+def test_added_comparison_keeps_the_diff_clean():
+    diff_text = """diff --git a/tests/test_cart.py b/tests/test_cart.py
+--- a/tests/test_cart.py
++++ b/tests/test_cart.py
+@@ -10,2 +10,2 @@ def test_total():
+-    assert cart.total() == 30
++    assert cart.total() != 0
+"""
+    assert _incidents(diff_text) == []

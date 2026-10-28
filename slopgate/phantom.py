@@ -20,6 +20,7 @@ from slopgate.fragment import Fragment
 class PhantomKind(str, Enum):
     HALLUCINATED_IMPORT = "HALLUCINATED_IMPORT"
     HALLUCINATED_STDLIB_METHOD = "HALLUCINATED_STDLIB_METHOD"
+    SELF_DECLARED_DEPENDENCY = "SELF_DECLARED_DEPENDENCY"
 
 
 @dataclass
@@ -140,6 +141,20 @@ class PhantomDetector:
     }
     LOCAL_SCAN_DEPTH = 3
 
+    MANIFEST_NAMES = {
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "pipfile",
+        "environment.yml",
+        "environment.yaml",
+        "uv.lock",
+        "poetry.lock",
+    }
+    DIST_RE = re.compile(
+        r"^([A-Za-z0-9][A-Za-z0-9_.\-]*)(?:\[[^\]]*\])?(?:[<>=!~^][^,;\s]*)?$"
+    )
+
     # Common hallucinated methods on standard library objects
     KNOWN_STDLIB_HALLUCINATIONS = {
         ("json", "loads_async"): "json has no async loads method.",
@@ -159,9 +174,8 @@ class PhantomDetector:
 
         Manifests are read from every directory up to LOCAL_SCAN_DEPTH so
         monorepos and `src/` layouts resolve too. The manifest is the PR head's
-        copy: shortcut: a PR that adds its own dependency declaration can
-        whitelist a package in the same diff, move to base-SHA manifests if
-        that is ever abused.
+        copy, so a dependency the diff declares itself is reported by
+        `added_dependencies` rather than trusted silently.
         """
         repo_root = (repo_root or Path.cwd()).resolve()
         deps: Set[str] = set()
@@ -346,8 +360,48 @@ class PhantomDetector:
                 in_deps = False
 
     @classmethod
+    def is_manifest_path(cls, path: str) -> bool:
+        name = Path(path).name.lower()
+        return name in cls.MANIFEST_NAMES or (
+            name.endswith(".txt") and "requirement" in name
+        )
+
+    @classmethod
+    def added_dependencies(cls, files, declared_deps: Set[str]) -> Set[str]:
+        """Dependencies this diff introduces. A PR must not whitelist its own imports.
+
+        Names that also appear in a removed manifest line already existed, so a
+        rewritten `dependencies = [...]` line does not flag the whole list.
+        """
+        added: Set[str] = set()
+        removed: Set[str] = set()
+        for file_diff in files:
+            if file_diff.is_deleted or not cls.is_manifest_path(file_diff.target_path):
+                continue
+            added |= cls._dist_names(file_diff.added_lines)
+            removed |= cls._dist_names(file_diff.removed_lines)
+        return (added - removed) & declared_deps
+
+    @classmethod
+    def _dist_names(cls, lines) -> Set[str]:
+        names: Set[str] = set()
+        for _, line in lines:
+            text = line.strip().split("#")[0]
+            candidates = re.findall(r"[\"']([^\"']+)[\"']", text)
+            # requirements.txt / environment.yml entries are bare names
+            candidates.append(text.strip().strip("\"', ").lstrip("-").strip())
+            for candidate in candidates:
+                match = cls.DIST_RE.match(candidate)
+                if match:
+                    names.add(_normalize(match.group(1)))
+        return names
+
+    @classmethod
     def analyze_file(
-        cls, file_diff: FileDiff, declared_deps: Set[str]
+        cls,
+        file_diff: FileDiff,
+        declared_deps: Set[str],
+        self_declared: Optional[Set[str]] = None,
     ) -> List[PhantomIncident]:
         incidents: List[PhantomIncident] = []
         if not file_diff.is_python or file_diff.is_deleted:
@@ -357,6 +411,7 @@ class PhantomDetector:
         if not fragment.text.strip():
             return incidents
 
+        self_declared = self_declared or set()
         tree, offset = fragment.parse()
         if tree is not None:
             return cls._scan_tree(
@@ -364,6 +419,7 @@ class PhantomDetector:
                 file_diff,
                 lambda lineno: fragment.real_line(lineno, offset),
                 declared_deps,
+                self_declared,
             )
 
         # Unparseable fragment (a hunk can start mid-expression): scan each added
@@ -380,13 +436,19 @@ class PhantomDetector:
                 continue
             incidents.extend(
                 cls._scan_tree(
-                    line_tree, file_diff, lambda _lineno, ln=ln: ln, declared_deps
+                    line_tree,
+                    file_diff,
+                    lambda _lineno, ln=ln: ln,
+                    declared_deps,
+                    self_declared,
                 )
             )
         return incidents
 
     @classmethod
-    def _scan_tree(cls, tree, file_diff, line_of, declared_deps: Set[str]):
+    def _scan_tree(
+        cls, tree, file_diff, line_of, declared_deps: Set[str], self_declared: Set[str]
+    ):
         incidents: List[PhantomIncident] = []
         # Imports under `if TYPE_CHECKING:` never load at runtime.
         type_only_lines: Set[int] = set()
@@ -404,17 +466,15 @@ class PhantomDetector:
                 if getattr(node, "lineno", 0) in type_only_lines:
                     continue
                 for alias in node.names:
-                    top_pkg = alias.name.split(".")[0]
-                    if not cls._is_known_package(top_pkg, declared_deps):
-                        incidents.append(
-                            PhantomIncident(
-                                kind=PhantomKind.HALLUCINATED_IMPORT,
-                                file_path=file_diff.target_path,
-                                line_number=line_of(getattr(node, "lineno", 1)),
-                                symbol=alias.name,
-                                message=f"Package '{alias.name}' is not in stdlib, project dependencies, or local modules.",
-                            )
-                        )
+                    cls._append_import(
+                        node,
+                        alias.name,
+                        file_diff,
+                        line_of,
+                        declared_deps,
+                        self_declared,
+                        incidents,
+                    )
 
             # Check `from x import y`
             elif isinstance(node, ast.ImportFrom):
@@ -422,17 +482,15 @@ class PhantomDetector:
                     continue
                 # Relative imports (from . import x) always resolve inside the package
                 if node.module and not node.level:
-                    top_pkg = node.module.split(".")[0]
-                    if not cls._is_known_package(top_pkg, declared_deps):
-                        incidents.append(
-                            PhantomIncident(
-                                kind=PhantomKind.HALLUCINATED_IMPORT,
-                                file_path=file_diff.target_path,
-                                line_number=line_of(getattr(node, "lineno", 1)),
-                                symbol=node.module,
-                                message=f"Module '{node.module}' is not in stdlib, project dependencies, or local modules.",
-                            )
-                        )
+                    cls._append_import(
+                        node,
+                        node.module,
+                        file_diff,
+                        line_of,
+                        declared_deps,
+                        self_declared,
+                        incidents,
+                    )
 
             # Check hallucinated stdlib method calls (e.g. json.loads_async)
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
@@ -452,6 +510,58 @@ class PhantomDetector:
                         )
 
         return incidents
+
+    @classmethod
+    def _append_import(
+        cls,
+        node,
+        name: str,
+        file_diff,
+        line_of,
+        declared_deps: Set[str],
+        self_declared: Set[str],
+        incidents: List[PhantomIncident],
+    ) -> None:
+        issue = cls._classify_import(name, declared_deps, self_declared)
+        if issue is None:
+            return
+        kind, message = issue
+        incidents.append(
+            PhantomIncident(
+                kind=kind,
+                file_path=file_diff.target_path,
+                line_number=line_of(getattr(node, "lineno", 1)),
+                symbol=name,
+                message=message,
+            )
+        )
+
+    @classmethod
+    def _classify_import(
+        cls, name: str, declared_deps: Set[str], self_declared: Set[str]
+    ):
+        top_pkg = name.split(".")[0]
+        if not cls._is_known_package(top_pkg, declared_deps):
+            return (
+                PhantomKind.HALLUCINATED_IMPORT,
+                f"Module '{name}' is not in stdlib, project dependencies, or local modules.",
+            )
+        if cls._declared_only_by_pr(top_pkg, self_declared):
+            return (
+                PhantomKind.SELF_DECLARED_DEPENDENCY,
+                f"Module '{name}' is declared only by this PR's own manifest change; verify the package exists.",
+            )
+        return None
+
+    @classmethod
+    def _declared_only_by_pr(cls, pkg_name: str, self_declared: Set[str]) -> bool:
+        pkg_clean = _normalize(pkg_name)
+        if pkg_clean in cls.STDLIB_MODULES:
+            return False
+        alias = cls.IMPORT_ALIASES.get(pkg_clean)
+        if pkg_clean in self_declared or (alias and alias in self_declared):
+            return True
+        return any(dep.startswith(pkg_clean + "_") for dep in self_declared)
 
     @classmethod
     def _is_known_package(cls, pkg_name: str, declared_deps: Set[str]) -> bool:

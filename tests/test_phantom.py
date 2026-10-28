@@ -302,3 +302,30 @@ def test_bom_does_not_hide_the_first_line():
     )
     incidents = _incidents(diff, set())
     assert any(inc.symbol == "hallucinated_pkg" for inc in incidents)
+
+
+def test_self_declared_dependency_is_reported():
+    diff_text = """diff --git a/src/agent.py b/src/agent.py
+--- a/src/agent.py
++++ b/src/agent.py
+@@ -1,1 +1,2 @@
++from hallucinated_sdk import Agent
+"""
+    files = DiffParser.parse(diff_text)
+    incidents = PhantomDetector.analyze_file(
+        files[0], {"hallucinated_sdk"}, {"hallucinated_sdk"}
+    )
+    assert [inc.kind for inc in incidents] == [PhantomKind.SELF_DECLARED_DEPENDENCY]
+
+
+def test_added_dependencies_reads_manifest_hunks():
+    diff_text = """diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -5,2 +5,2 @@
+-dependencies = ["requests>=2.0"]
++dependencies = ["requests>=2.0", "hallucinated-sdk>=1.0"]
+"""
+    files = DiffParser.parse(diff_text)
+    added = PhantomDetector.added_dependencies(files, {"requests", "hallucinated_sdk"})
+    assert added == {"hallucinated_sdk"}

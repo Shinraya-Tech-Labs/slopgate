@@ -3,7 +3,7 @@ SlopGate: AST-based Code Integrity & PR Integrity Shield for Open Source Maintai
 Zero-dependency, deterministic detection of test tampering, phantom symbols, and slop bloat.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __author__ = "Shinraya Tech Labs"
 
 from slopgate.engine import AuditEngine, AuditReport, Severity, Violation
