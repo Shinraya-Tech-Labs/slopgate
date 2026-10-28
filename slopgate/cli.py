@@ -107,14 +107,25 @@ index 5678901..cdef0123 100644
 
 
 def get_git_diff() -> str:
-    """Gets git diff against origin/main or HEAD~1 or working tree."""
-    for cmd in [
+    """Gets git diff against GITHUB_BASE_REF, origin/main, master, or working tree."""
+    import os
+    base_ref = os.environ.get("GITHUB_BASE_REF")
+    cmds = []
+    if base_ref:
+        cmds.extend([
+            ["git", "diff", f"origin/{base_ref}...HEAD"],
+            ["git", "diff", f"{base_ref}...HEAD"],
+        ])
+    cmds.extend([
         ["git", "diff", "origin/main...HEAD"],
         ["git", "diff", "main...HEAD"],
+        ["git", "diff", "origin/master...HEAD"],
+        ["git", "diff", "master...HEAD"],
         ["git", "diff", "HEAD~1"],
         ["git", "diff", "--cached"],
         ["git", "diff"],
-    ]:
+    ])
+    for cmd in cmds:
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if res.stdout.strip():
