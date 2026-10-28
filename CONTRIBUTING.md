@@ -17,11 +17,11 @@ SlopGate dogfoods itself! Every Pull Request submitted to SlopGate is audited by
    cd slopgate
    ```
 
-2. Run the test suite:
+2. Install the dev dependencies and run the test suite:
    ```bash
-   python tests/test_tamper.py
-   python tests/test_phantom.py
-   python tests/test_engine.py
+   pip install -e ".[dev]"
+   python -m pytest -q
+   python -m ruff check slopgate tests
    ```
 
 3. Run the interactive demo:

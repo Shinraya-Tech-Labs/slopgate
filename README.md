@@ -232,9 +232,8 @@ To run tests locally:
 ```bash
 git clone https://github.com/Shinraya-Tech-Labs/slopgate.git
 cd slopgate
-python tests/test_tamper.py
-python tests/test_phantom.py
-python tests/test_engine.py
+pip install -e ".[dev]"
+python -m pytest -q
 ```
 
 ---
