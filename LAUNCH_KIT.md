@@ -41,10 +41,10 @@ What it deliberately does NOT do:
 - It doesn't judge grammar or vocabulary.
 
 You can try the interactive terminal simulation locally:
-pip install slopgate && slopgate demo
+pip install slopgate-cli && slopgate demo
 
 Or run it as a composite GitHub Action:
-uses: Shinraya-Tech-Labs/slopgate@main
+uses: Shinraya-Tech-Labs/slopgate@v0.1.0
 
 Code: https://github.com/Shinraya-Tech-Labs/slopgate (Apache 2.0)
 
@@ -80,7 +80,7 @@ It detects pull requests that pass CI dishonestly:
 
 It includes an interactive terminal simulation so you can see it in action without configuring CI:
 ```bash
-pip install slopgate
+pip install slopgate-cli
 slopgate demo
 ```
 
@@ -117,7 +117,7 @@ We built SlopGate: an AST-based Code Integrity Shield. 🛡️
 • Zero false-positive drama (evaluates code, not English)
 
 Try the interactive demo:
-pip install slopgate && slopgate demo
+pip install slopgate-cli && slopgate demo
 
 GitHub: https://github.com/Shinraya-Tech-Labs/slopgate
 ```

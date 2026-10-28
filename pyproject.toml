@@ -3,10 +3,19 @@ requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "slopgate"
+name = "slopgate-cli"
 version = "0.1.0"
-description = "🛡️ AST-based code integrity, test tamper detection, and phantom symbol interception for GitHub Pull Requests."
+description = "AST-based code integrity, test tamper detection, and phantom symbol interception for GitHub Pull Requests."
 readme = "README.md"
+keywords = [
+    "ai-slop",
+    "ast",
+    "code-integrity",
+    "github-action",
+    "maintainers",
+    "pull-requests",
+    "test-tampering",
+]
 authors = [
     { name = "Shinraya Tech Labs", email = "labs@shinraya.com" }
 ]
@@ -38,6 +47,11 @@ slopgate = "slopgate.cli:main"
 Homepage = "https://github.com/Shinraya-Tech-Labs/slopgate"
 Repository = "https://github.com/Shinraya-Tech-Labs/slopgate.git"
 Issues = "https://github.com/Shinraya-Tech-Labs/slopgate/issues"
+Changelog = "https://github.com/Shinraya-Tech-Labs/slopgate/blob/main/CHANGELOG.md"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["."]

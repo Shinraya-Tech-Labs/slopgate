@@ -13,13 +13,14 @@
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20required-brightgreen?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square)](LICENSE)
 [![GitHub Action](https://img.shields.io/badge/GitHub_Action-marketplace-orange?style=flat-square&logo=githubactions)](action.yml)
+[![PyPI](https://img.shields.io/pypi/v/slopgate-cli?style=flat-square&logo=pypi)](https://pypi.org/project/slopgate-cli/)
 [![Protected by SlopGate](https://img.shields.io/badge/PRs-SlopGate_Protected-brightgreen?style=flat-square&logo=github)](https://github.com/Shinraya-Tech-Labs/slopgate)
 
 <br/>
 
 ```bash
 # 🎮 Try the instant interactive simulator in your terminal
-pip install slopgate
+pip install slopgate-cli
 slopgate demo
 ```
 
@@ -138,7 +139,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   slopgate:
@@ -150,7 +150,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run SlopGate Shield
-        uses: Shinraya-Tech-Labs/slopgate@main
+        uses: Shinraya-Tech-Labs/slopgate@v0.1.0
         with:
           fail-on: blocked   # 'blocked' (fails on tamper/hallucinations) or 'warning'
 ```
