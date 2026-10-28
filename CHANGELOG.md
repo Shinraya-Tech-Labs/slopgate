@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-28
+
+### Fixed
+
+- A test file that adds no assertion (only scaffolding — imports, a function
+  body, no `assert` / `pytest.raises` / `self.assert*`) no longer counts as a
+  reproduction test. Such a PR now reports `SG-MISSING_TEST_REPRO` instead of
+  being reported as verified.
+
 ## [0.1.1] - 2026-10-28
 
 Correctness release: two tamper classes that v0.1.0 reported as warnings now block.

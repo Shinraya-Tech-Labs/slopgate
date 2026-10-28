@@ -115,6 +115,28 @@ deleted file mode 100644
     assert any(v.rule_id == "SG-TEST_FILE_DELETED" for v in report.violations)
 
 
+def test_test_file_without_assertions_is_not_a_reproduction():
+    diff_text = """diff --git a/src/store.py b/src/store.py
+--- a/src/store.py
++++ b/src/store.py
+@@ -1,1 +1,2 @@
++def reset():
++    pass
+diff --git a/tests/test_reset.py b/tests/test_reset.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_reset.py
+@@ -0,0 +1,4 @@
++from src.store import reset
++
++
++def test_reset():
+"""
+    report = AuditEngine().audit_diff(diff_text)
+    assert not report.repro_verified
+    assert any(v.rule_id == "SG-MISSING_TEST_REPRO" for v in report.violations)
+
+
 def test_docs_only_diff_is_not_doc_bloat():
     lines = "".join(f"+Documentation line {i}\\n" for i in range(40))
     diff_text = (

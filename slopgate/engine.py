@@ -63,6 +63,16 @@ class AuditReport:
 
 QUOTE_DELIMS = ('"""', "'''")
 
+# A test that adds no assertion is a skeleton, not a reproduction.
+ASSERTION_HINTS = ("assert ", "assert(", "self.assert")
+
+
+def adds_assertion(lines: List[Tuple[int, str]]) -> bool:
+    return any(
+        line.strip().startswith(ASSERTION_HINTS) or "pytest.raises" in line
+        for _, line in lines
+    )
+
 
 def classify_added_python_lines(lines: List[Tuple[int, str]]) -> Tuple[int, int]:
     """Splits added Python lines into (doc/comment, executable) counts.
@@ -131,7 +141,10 @@ class AuditEngine:
                     )
                 )
             elif f.is_test_file:
-                has_test_change = True
+                # A test file that only adds scaffolding (no assertion) is not
+                # a reproduction, even though it is a "test change".
+                if adds_assertion(f.added_lines):
+                    has_test_change = True
                 # Run Test Tampering Inspection
                 incidents = AstTamperAnalyzer.analyze_file(f)
                 for inc in incidents:
