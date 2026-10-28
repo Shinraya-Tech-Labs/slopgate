@@ -43,6 +43,12 @@ jobs:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
+    # Trusted Publishing (OIDC): configure the pending publisher on PyPI with
+    # owner Shinraya-Tech-Labs, repo slopgate, workflow release.yml, no environment.
+    # https://pypi.org/manage/account/publishing/
+    permissions:
+      id-token: write
+      attestations: write
     env:
       # Secrets are not available in step `if` conditions, so expose the token here.
       PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
@@ -52,12 +58,15 @@ jobs:
         with:
           name: dist
           path: dist
-      - name: Publish to PyPI
-        # Configure PYPI_API_TOKEN to enable publishing; otherwise the step is skipped.
+      - name: Publish with API token
+        # Used when PYPI_API_TOKEN is configured; otherwise OIDC below takes over.
         if: env.PYPI_API_TOKEN != ''
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Publish with Trusted Publishing
+        if: env.PYPI_API_TOKEN == ''
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
 
   release:
     name: Create GitHub Release

@@ -30,7 +30,9 @@ First public release. Python 3.10+, zero runtime dependencies.
 - `slopgate badge` — Markdown and HTML README badges.
 - Composite GitHub Action with Step Summary output and `::error` annotations.
 - GitHub Actions workflows: CI matrix (Python 3.10–3.13 on Linux/macOS/Windows),
-  release pipeline (build → PyPI → GitHub Release) with SHA-pinned actions.
+  package-integrity job (build + `twine check` + wheel smoke test), and a release
+  pipeline (build → PyPI via Trusted Publishing or `PYPI_API_TOKEN` → GitHub
+  Release) with SHA-pinned actions.
 
 [Unreleased]: https://github.com/Shinraya-Tech-Labs/slopgate/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Shinraya-Tech-Labs/slopgate/releases/tag/v0.1.0
