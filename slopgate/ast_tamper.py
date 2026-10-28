@@ -8,7 +8,7 @@ import ast
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from slopgate.diff_parser import FileDiff, Hunk
 from slopgate.fragment import Fragment
@@ -59,20 +59,22 @@ class AstTamperAnalyzer:
         cls._check_assert_deletions(file_diff, incidents)
 
         # 2. Check for Weakened Assertions / Tautologies in newly added lines using AST
-        for ln, line in file_diff.added_lines:
+        covered = Fragment(file_diff).string_lines()
+        for idx, (ln, line) in enumerate(file_diff.added_lines, start=1):
             stripped = line.strip()
-            if cls._is_assert_line(stripped):
-                weakened_msg = cls._check_weakened_assert(stripped)
-                if weakened_msg:
-                    incidents.append(
-                        TamperIncident(
-                            kind=TamperKind.ASSERT_WEAKENED,
-                            file_path=file_diff.target_path,
-                            line_number=ln,
-                            message=weakened_msg,
-                            snippet=stripped,
-                        )
+            if idx in covered or not cls._is_assert_line(stripped):
+                continue
+            weakened_msg = cls._check_weakened_assert(stripped)
+            if weakened_msg:
+                incidents.append(
+                    TamperIncident(
+                        kind=TamperKind.ASSERT_WEAKENED,
+                        file_path=file_diff.target_path,
+                        line_number=ln,
+                        message=weakened_msg,
+                        snippet=stripped,
                     )
+                )
 
         # 3. Check for Try-Except Suppressions (try: ... except: pass) in added lines
         cls._check_try_except_suppression(file_diff, incidents)
@@ -100,12 +102,8 @@ class AstTamperAnalyzer:
     def _check_hunk_assertions(
         cls, file_diff: FileDiff, hunk: Hunk, incidents: List[TamperIncident]
     ):
-        removed_asserts = [
-            (ln, line) for ln, line in hunk.removed if cls._is_assert_line(line)
-        ]
-        added_asserts = [
-            (ln, line) for ln, line in hunk.added if cls._is_assert_line(line)
-        ]
+        removed_asserts = cls._assert_lines(hunk.removed)
+        added_asserts = cls._assert_lines(hunk.added)
 
         net_loss = len(removed_asserts) - len(added_asserts)
         if net_loss <= 0:
@@ -120,6 +118,16 @@ class AstTamperAnalyzer:
                     snippet=line.strip(),
                 )
             )
+
+    @classmethod
+    def _assert_lines(cls, lines: List[Tuple[int, str]]) -> List[Tuple[int, str]]:
+        """Assertions in these lines, ignoring text inside block strings."""
+        covered = Fragment.from_lines(lines).string_lines()
+        return [
+            (ln, line)
+            for idx, (ln, line) in enumerate(lines, start=1)
+            if idx not in covered and cls._is_assert_line(line)
+        ]
 
     @classmethod
     def _check_weakened_assert(cls, assert_line: str) -> Optional[str]:
@@ -198,7 +206,13 @@ class AstTamperAnalyzer:
             return
 
         # Fallback regex if the snippet isn't parseable even with the stub wrapper
-        if re.search(r"except\s*.*:\s*(?:\n\s*)?pass\b", fragment.text):
+        covered = fragment.string_lines()
+        code_text = "\n".join(
+            line
+            for idx, (_, line) in enumerate(file_diff.added_lines, start=1)
+            if idx not in covered
+        )
+        if re.search(r"except\s*.*:\s*(?:\n\s*)?pass\b", code_text):
             incidents.append(
                 TamperIncident(
                     kind=TamperKind.TRY_EXCEPT_BYPASS,
@@ -212,6 +226,7 @@ class AstTamperAnalyzer:
     @classmethod
     def _check_skips(cls, file_diff: FileDiff, incidents: List[TamperIncident]):
         fragment = Fragment(file_diff)
+        covered = fragment.string_lines()
         found_lines = set()
 
         tree, offset = fragment.parse()
@@ -236,14 +251,17 @@ class AstTamperAnalyzer:
             return
 
         # Fallback for fragments the parser cannot handle (e.g. mixed indentation)
-        for ln, line in file_diff.added_lines:
-            if SKIP_FALLBACK_RE.match(line):
+        for idx, (ln, line) in enumerate(file_diff.added_lines, start=1):
+            if idx in covered:
+                continue
+            stripped = line.strip()
+            if SKIP_FALLBACK_RE.match(stripped):
                 incidents.append(
                     TamperIncident(
                         kind=TamperKind.TEST_SKIPPED,
                         file_path=file_diff.target_path,
                         line_number=ln,
                         message="Test explicitly skipped with pytest.skip / @mark.skip in PR.",
-                        snippet=line.strip(),
+                        snippet=stripped,
                     )
                 )

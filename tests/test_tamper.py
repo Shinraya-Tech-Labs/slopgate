@@ -122,6 +122,33 @@ def test_skip_mentioned_in_comment_is_allowed():
     assert _incidents(diff_text) == []
 
 
+def test_docstring_text_removal_does_not_hide_assert_deletion():
+    diff_text = '''diff --git a/tests/test_api.py b/tests/test_api.py
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -6,3 +6,1 @@
+-    """trailing doc text.
+-    """
+-    assert res.status == "ok"
++    pass
+'''
+    incidents = _incidents(diff_text)
+    assert [inc.kind for inc in incidents] == [TamperKind.ASSERT_DELETED]
+
+
+def test_assert_text_inside_a_docstring_is_ignored():
+    diff_text = '''diff --git a/tests/test_dsl.py b/tests/test_dsl.py
+--- a/tests/test_dsl.py
++++ b/tests/test_dsl.py
+@@ -1,1 +1,4 @@
++EXAMPLE = """assert response is not None
++    assert True
++@pytest.mark.skip
++"""
+'''
+    assert _incidents(diff_text) == []
+
+
 def test_incident_line_numbers_are_absolute():
     diff_text = """diff --git a/tests/test_late.py b/tests/test_late.py
 --- a/tests/test_late.py

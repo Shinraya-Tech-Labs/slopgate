@@ -4,6 +4,7 @@ Orchestrates AST tamper checks, phantom symbol detection, diff metrics,
 and maintainer verdict generation.
 """
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -83,10 +84,12 @@ def classify_added_python_lines(lines: List[Tuple[int, str]]) -> Tuple[int, int]
         if stripped.startswith("#"):
             doc += 1
             continue
+        # Drop a string prefix (r""" / f""" / rb""") before delimiter detection
+        literal = re.sub(r"^[rRbBuUfF]{0,2}(?=['\"])", "", stripped)
         for delim in QUOTE_DELIMS:
-            if stripped.startswith(delim):
+            if literal.startswith(delim):
                 doc += 1
-                if stripped.count(delim) == 1:
+                if literal.count(delim) == 1:
                     block = delim
                 break
         else:
@@ -113,7 +116,8 @@ class AuditEngine:
         tampered_test = False
 
         for f in files:
-            if f.is_test_file:
+            # A deleted test file is not a reproduction test
+            if f.is_test_file and not f.is_deleted:
                 has_test_change = True
                 # Run Test Tampering Inspection
                 incidents = AstTamperAnalyzer.analyze_file(f)
@@ -179,7 +183,7 @@ class AuditEngine:
         if (
             metrics.slop_ratio > 4.0
             and metrics.doc_added >= 30
-            and metrics.code_added < 5
+            and 0 < metrics.code_added < 5
         ):
             violations.append(
                 Violation(

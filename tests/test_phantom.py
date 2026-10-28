@@ -96,6 +96,32 @@ def test_line_numbers_map_to_real_file():
     assert sorted(inc.line_number for inc in incidents) == [100, 101]
 
 
+def test_hallucinated_api_inside_a_docstring_is_ignored():
+    diff_text = '''diff --git a/slopgate/cli.py b/slopgate/cli.py
+--- a/slopgate/cli.py
++++ b/slopgate/cli.py
+@@ -1,1 +1,5 @@
++SAMPLE = """diff --git a/x.py b/x.py
++    return json.loads_async(data)
++import fake_pkg
++"""
++    )
+'''
+    assert _incidents(diff_text, set()) == []
+
+
+def test_unparseable_fragment_still_flags_real_calls():
+    diff_text = """diff --git a/src/svc.py b/src/svc.py
+--- a/src/svc.py
++++ b/src/svc.py
+@@ -1,1 +1,3 @@
++    x = json.loads_async(data)
++    )
+"""
+    incidents = _incidents(diff_text, set())
+    assert [inc.kind for inc in incidents] == [PhantomKind.HALLUCINATED_STDLIB_METHOD]
+
+
 def test_declared_dependencies_only_reads_dependency_sections(tmp_path):
     (tmp_path / "pyproject.toml").write_text(
         "[project]\n"
@@ -115,6 +141,16 @@ def test_declared_dependencies_only_reads_dependency_sections(tmp_path):
     assert "magic_sdk" not in deps
 
 
+def test_allow_namespaced_distribution():
+    diff_text = """diff --git a/src/storage.py b/src/storage.py
+--- a/src/storage.py
++++ b/src/storage.py
+@@ -1,1 +1,2 @@
++from google.cloud import storage
+"""
+    assert _incidents(diff_text, {"google_cloud_storage"}) == []
+
+
 def test_declared_dependencies_reads_nested_requirements(tmp_path):
     (tmp_path / "requirements").mkdir()
     (tmp_path / "requirements" / "dev.txt").write_text(
@@ -123,6 +159,41 @@ def test_declared_dependencies_reads_nested_requirements(tmp_path):
     deps = PhantomDetector.get_declared_dependencies(tmp_path)
     assert "pyyaml" in deps
     assert "-r" not in deps
+
+
+def test_declared_dependencies_reads_setup_py(tmp_path):
+    (tmp_path / "setup.py").write_text(
+        "from setuptools import setup\n"
+        "setup(name='demo', install_requires=['numpy>=1.0', 'requests'])\n",
+        encoding="utf-8",
+    )
+    deps = PhantomDetector.get_declared_dependencies(tmp_path)
+    assert {"numpy", "requests"} <= deps
+
+
+def test_declared_dependencies_reads_environment_yml(tmp_path):
+    (tmp_path / "environment.yml").write_text(
+        "name: demo\n"
+        "dependencies:\n"
+        "  - numpy=1.26\n"
+        "  - conda-forge::scipy=1.11\n"
+        "  - pip:\n"
+        "      - requests\n",
+        encoding="utf-8",
+    )
+    deps = PhantomDetector.get_declared_dependencies(tmp_path)
+    assert "numpy" in deps
+    assert "requests" in deps
+
+
+def test_declared_dependencies_follows_requirement_includes(tmp_path):
+    (tmp_path / "requirements").mkdir()
+    (tmp_path / "requirements" / "base.txt").write_text("httpx\n", encoding="utf-8")
+    (tmp_path / "requirements" / "dev.txt").write_text(
+        "-r base.txt\npytest\n", encoding="utf-8"
+    )
+    deps = PhantomDetector.get_declared_dependencies(tmp_path)
+    assert {"httpx", "pytest"} <= deps
 
 
 def test_declared_dependencies_reads_poetry(tmp_path):

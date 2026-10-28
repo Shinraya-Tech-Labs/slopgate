@@ -6,6 +6,7 @@ from pathlib import Path
 
 from slopgate import AuditEngine, Severity, Violation
 from slopgate.cli import SAMPLE_CLEAN_DIFF, SAMPLE_PHANTOM_DIFF, SAMPLE_TAMPERED_DIFF
+from slopgate.engine import classify_added_python_lines
 from slopgate.reporter import Reporter
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -68,6 +69,47 @@ def test_slop_doc_bloat_fixture_is_flagged():
     report = _audit("slop_doc_bloat.diff")
     assert any(v.rule_id == "SG-SLOP_BLOAT" for v in report.violations)
     assert report.status == Severity.WARNING
+
+
+def test_deleted_test_file_is_not_a_reproduction():
+    diff_text = """diff --git a/src/auth.py b/src/auth.py
+--- a/src/auth.py
++++ b/src/auth.py
+@@ -1,1 +1,2 @@
++def login():
++    pass
+diff --git a/tests/test_auth.py b/tests/test_auth.py
+deleted file mode 100644
+--- a/tests/test_auth.py
++++ /dev/null
+@@ -1,2 +0,0 @@
+-def test_login():
+-    assert login() is not None
+"""
+    report = AuditEngine().audit_diff(diff_text)
+    assert not report.repro_verified
+    assert any(v.rule_id == "SG-MISSING_TEST_REPRO" for v in report.violations)
+    assert report.status != Severity.INFO
+
+
+def test_docs_only_diff_is_not_doc_bloat():
+    lines = "".join(f"+Documentation line {i}\\n" for i in range(40))
+    diff_text = (
+        "diff --git a/README.md b/README.md\n"
+        "--- a/README.md\n"
+        "+++ b/README.md\n"
+        "@@ -1,0 +1,40 @@\n" + lines
+    )
+    report = AuditEngine().audit_diff(diff_text)
+    assert not any(v.rule_id == "SG-SLOP_BLOAT" for v in report.violations)
+    assert report.status == Severity.INFO
+
+
+def test_prefixed_docstrings_count_as_docs():
+    doc, code = classify_added_python_lines(
+        [(1, 'r"""Doc.'), (2, "more"), (3, '"""'), (4, "x = 1")]
+    )
+    assert (doc, code) == (3, 1)
 
 
 def test_tampered_test_does_not_verify_repro():

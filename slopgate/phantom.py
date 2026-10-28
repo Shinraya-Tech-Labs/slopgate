@@ -117,15 +117,22 @@ class PhantomDetector:
         req_files = list(repo_root.glob("*requirement*.txt")) + list(
             repo_root.glob("requirements/*.txt")
         )
-        for req_file in req_files:
+        for req_file in sorted(set(req_files)):
+            cls._read_requirements_file(req_file, deps)
+
+        # 2. setup.py install_requires=[...]
+        setup_py = repo_root / "setup.py"
+        if setup_py.exists():
             try:
-                cls._read_requirement_lines(
-                    req_file.read_text(encoding="utf-8", errors="ignore"), deps
-                )
+                content = setup_py.read_text(encoding="utf-8", errors="ignore")
+                block = re.search(r"install_requires\s*=\s*\[(.*?)\]", content, re.S)
+                if block:
+                    for match in re.finditer(r'["\']([^"\']+)["\']', block.group(1)):
+                        deps.add(_normalize(match.group(1)))
             except Exception:
                 pass
 
-        # 2. setup.cfg [options] install_requires
+        # 3. setup.cfg [options] install_requires
         setup_cfg = repo_root / "setup.cfg"
         if setup_cfg.exists():
             try:
@@ -138,7 +145,20 @@ class PhantomDetector:
             except Exception:
                 pass
 
-        # 3. Pipfile [packages] / [dev-packages]
+        # 4. environment.yml (conda)
+        for env_file in (repo_root / "environment.yml", repo_root / "environment.yaml"):
+            if not env_file.exists():
+                continue
+            try:
+                content = env_file.read_text(encoding="utf-8", errors="ignore")
+                for line in content.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("- ") and "::" not in stripped:
+                        deps.add(_normalize(stripped[2:]))
+            except Exception:
+                pass
+
+        # 5. Pipfile [packages] / [dev-packages]
         pipfile = repo_root / "Pipfile"
         if pipfile.exists():
             try:
@@ -153,7 +173,7 @@ class PhantomDetector:
             except Exception:
                 pass
 
-        # 4. pyproject.toml: only dependency sections, not every quoted string
+        # 6. pyproject.toml: only dependency sections, not every quoted string
         pyproject = repo_root / "pyproject.toml"
         if pyproject.exists():
             try:
@@ -163,7 +183,7 @@ class PhantomDetector:
             except Exception:
                 pass
 
-        # 5. Local repo top-level packages & modules
+        # 7. Local repo top-level packages & modules
         for p in repo_root.glob("*.py"):
             deps.add(p.stem.lower())
         for pattern in ("*/__init__.py", "src/*.py", "src/*/__init__.py"):
@@ -173,6 +193,27 @@ class PhantomDetector:
                 )
 
         return deps
+
+    @classmethod
+    def _read_requirements_file(cls, path: Path, deps: Set[str], depth: int = 0):
+        """Reads a requirements file, following `-r` includes one level deep."""
+        if depth > 5:
+            return
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return
+        for line in text.splitlines():
+            stripped = line.strip().split("#")[0].strip()
+            if not stripped:
+                continue
+            if stripped.startswith(("-r ", "--requirement ")):
+                included = stripped.split(None, 1)[1].strip().strip("'\"")
+                cls._read_requirements_file(path.parent / included, deps, depth + 1)
+                continue
+            if stripped.startswith("-") or "://" in stripped:
+                continue
+            deps.add(_normalize(stripped))
 
     @classmethod
     def _read_requirement_lines(cls, text: str, deps: Set[str]):
@@ -240,10 +281,36 @@ class PhantomDetector:
             return incidents
 
         tree, offset = fragment.parse()
-        if tree is None:
-            # Fallback to regex-based line inspection if fragment is not parseable
-            return cls._fallback_regex_scan(file_diff, declared_deps)
+        if tree is not None:
+            return cls._scan_tree(
+                tree,
+                file_diff,
+                lambda lineno: fragment.real_line(lineno, offset),
+                declared_deps,
+            )
 
+        # Unparseable fragment (a hunk can start mid-expression): scan each added
+        # line on its own. Single-line strings parse as expressions, not calls.
+        # shortcut: statement-shaped prose inside a docstring of an unparseable
+        # hunk can still be flagged; upgrade to tokenize-based skipping if reported.
+        covered = fragment.string_lines()
+        for idx, (ln, line) in enumerate(file_diff.added_lines, start=1):
+            if idx in covered:
+                continue
+            try:
+                line_tree = ast.parse(line.strip())
+            except SyntaxError:
+                continue
+            incidents.extend(
+                cls._scan_tree(
+                    line_tree, file_diff, lambda _lineno, ln=ln: ln, declared_deps
+                )
+            )
+        return incidents
+
+    @classmethod
+    def _scan_tree(cls, tree, file_diff, line_of, declared_deps: Set[str]):
+        incidents: List[PhantomIncident] = []
         for node in ast.walk(tree):
             # Check `import x`
             if isinstance(node, ast.Import):
@@ -254,9 +321,7 @@ class PhantomDetector:
                             PhantomIncident(
                                 kind=PhantomKind.HALLUCINATED_IMPORT,
                                 file_path=file_diff.target_path,
-                                line_number=fragment.real_line(
-                                    getattr(node, "lineno", 1), offset
-                                ),
+                                line_number=line_of(getattr(node, "lineno", 1)),
                                 symbol=alias.name,
                                 message=f"Package '{alias.name}' is not in stdlib, project dependencies, or local modules.",
                             )
@@ -272,9 +337,7 @@ class PhantomDetector:
                             PhantomIncident(
                                 kind=PhantomKind.HALLUCINATED_IMPORT,
                                 file_path=file_diff.target_path,
-                                line_number=fragment.real_line(
-                                    getattr(node, "lineno", 1), offset
-                                ),
+                                line_number=line_of(getattr(node, "lineno", 1)),
                                 symbol=node.module,
                                 message=f"Module '{node.module}' is not in stdlib, project dependencies, or local modules.",
                             )
@@ -291,9 +354,7 @@ class PhantomDetector:
                             PhantomIncident(
                                 kind=PhantomKind.HALLUCINATED_STDLIB_METHOD,
                                 file_path=file_diff.target_path,
-                                line_number=fragment.real_line(
-                                    getattr(node, "lineno", 1), offset
-                                ),
+                                line_number=line_of(getattr(node, "lineno", 1)),
                                 symbol=f"{mod_name}.{attr_name}",
                                 message=cls.KNOWN_STDLIB_HALLUCINATIONS[key],
                             )
@@ -311,6 +372,10 @@ class PhantomDetector:
         alias = cls.IMPORT_ALIASES.get(pkg_clean)
         if alias and alias in declared_deps:
             return True
+        # Namespaced distributions: import `google.cloud.x` is served by
+        # `google-cloud-storage` (normalized prefix match).
+        if any(dep.startswith(pkg_clean + "_") for dep in declared_deps):
+            return True
         # Common build / test tooling usually injected by CI
         if pkg_clean in {
             "pytest",
@@ -321,52 +386,3 @@ class PhantomDetector:
         }:
             return True
         return False
-
-    @classmethod
-    def _fallback_regex_scan(
-        cls, file_diff: FileDiff, declared_deps: Set[str]
-    ) -> List[PhantomIncident]:
-        incidents: List[PhantomIncident] = []
-        for ln, line in file_diff.added_lines:
-            stripped = line.strip()
-            # Check hallucinated method calls
-            for (mod, method), msg in cls.KNOWN_STDLIB_HALLUCINATIONS.items():
-                if f"{mod}.{method}" in stripped:
-                    incidents.append(
-                        PhantomIncident(
-                            kind=PhantomKind.HALLUCINATED_STDLIB_METHOD,
-                            file_path=file_diff.target_path,
-                            line_number=ln,
-                            symbol=f"{mod}.{method}",
-                            message=msg,
-                        )
-                    )
-            # import foo
-            m = re.match(r"^import\s+([a-zA-Z0-9_\.]+)", stripped)
-            if m:
-                top_pkg = m.group(1).split(".")[0]
-                if not cls._is_known_package(top_pkg, declared_deps):
-                    incidents.append(
-                        PhantomIncident(
-                            kind=PhantomKind.HALLUCINATED_IMPORT,
-                            file_path=file_diff.target_path,
-                            line_number=ln,
-                            symbol=m.group(1),
-                            message=f"Package '{m.group(1)}' is not in stdlib, project dependencies, or local modules.",
-                        )
-                    )
-            # from foo import bar (relative imports are skipped)
-            m2 = re.match(r"^from\s+([a-zA-Z0-9_\.]+)\s+import", stripped)
-            if m2:
-                top_pkg = m2.group(1).split(".")[0]
-                if not cls._is_known_package(top_pkg, declared_deps):
-                    incidents.append(
-                        PhantomIncident(
-                            kind=PhantomKind.HALLUCINATED_IMPORT,
-                            file_path=file_diff.target_path,
-                            line_number=ln,
-                            symbol=m2.group(1),
-                            message=f"Module '{m2.group(1)}' is not in stdlib, project dependencies, or local modules.",
-                        )
-                    )
-        return incidents

@@ -51,9 +51,35 @@ rename to new_name.py
     assert files[0].added_lines == []
 
 
+def test_c_quoted_paths_are_decoded():
+    diff_text = (
+        'diff --git "a/t\\303\\251st.py" "b/t\\303\\251st.py"\n'
+        '--- "a/t\\303\\251st.py"\n'
+        '+++ "b/t\\303\\251st.py"\n'
+        "@@ -1,1 +1,1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n"
+    )
+    files = DiffParser.parse(diff_text)
+    assert files[0].target_path == "tést.py"
+
+
+def test_combined_merge_diff_is_skipped_not_misnumbered():
+    diff_text = """diff --git a/app.py b/app.py
+index 1111111..2222222 100644
+--- a/app.py
++++ b/app.py
+@@@ -1,2 -1,2 +1,3 @@@
++  x = 1
++  y = 2
+"""
+    files = DiffParser.parse(diff_text)
+    assert files[0].added_lines == []
+    assert files[0].removed_lines == []
+
+
 if __name__ == "__main__":
     test_hunks_are_tracked_separately()
     test_quoted_paths_with_spaces()
     test_rename_without_hunks_keeps_paths()
     print("[OK] All test_diff_parser assertions passed!")
-

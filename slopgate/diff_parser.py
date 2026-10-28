@@ -3,8 +3,8 @@ Git Unified Diff Parser.
 Extracts modified files, hunks, line mappings, and added/removed fragments.
 """
 
+import ast
 import re
-import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -53,14 +53,16 @@ class FileDiff:
 
 def _unquote(path: str) -> str:
     """Git wraps paths with spaces or special characters in double quotes."""
-    if len(path) >= 2 and path[0] == '"' and path[-1] == '"':
-        try:
-            parts = shlex.split(path)
-            if parts:
-                return parts[0]
-        except ValueError:
-            return path.strip('"')
-    return path
+    quoted = len(path) >= 2 and path[0] == '"' and path[-1] == '"'
+    if not quoted:
+        return path
+    inner = path[1:-1]
+    try:
+        # Git uses C-style escapes; octal sequences are UTF-8 bytes.
+        decoded = ast.literal_eval('"' + inner + '"')
+        return decoded.encode("latin-1", "replace").decode("utf-8", "replace")
+    except (ValueError, SyntaxError, UnicodeEncodeError):
+        return inner
 
 
 def _clean_path(path: str) -> Optional[str]:
@@ -80,7 +82,8 @@ class DiffParser:
     @classmethod
     def _header_paths(cls, line: str) -> Tuple[Optional[str], Optional[str]]:
         rest = line[len("diff --git ") :]
-        parts = shlex.split(rest) if '"' in rest else rest.split(" ")
+        # Quoted tokens (spaces/C-escapes) stay intact so _unquote can decode them
+        parts = re.findall(r'"(?:[^"\\]|\\.)*"|\S+', rest)
         if len(parts) < 2:
             return None, None
         return _clean_path(parts[0]), _clean_path(parts[1])
@@ -94,6 +97,7 @@ class DiffParser:
         new_line = 0
 
         lines = diff_text.splitlines()
+        skip_combined = False
         i = 0
         while i < len(lines):
             line = lines[i]
@@ -106,6 +110,7 @@ class DiffParser:
                     old_path=old_p, new_path=new_p, raw_diff=line + "\n"
                 )
                 current_hunk = None
+                skip_combined = False
                 i += 1
                 continue
 
@@ -124,6 +129,16 @@ class DiffParser:
                 continue
 
             current_file.raw_diff += line + "\n"
+
+            if line.startswith("@@@"):
+                # Combined (merge) diffs use two-column prefixes; parsing them as
+                # regular hunks would report garbage line numbers.
+                skip_combined = True
+                i += 1
+                continue
+            if skip_combined:
+                i += 1
+                continue
 
             if line.startswith("new file mode"):
                 current_file.is_new = True
