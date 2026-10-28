@@ -26,12 +26,17 @@ runs:
     - name: Run SlopGate Integrity Check
       shell: bash
       env:
+        # Never let the checked-out PR shadow the slopgate package: with `python -m`
+        # the working directory comes before PYTHONPATH, so a PR adding its own
+        # slopgate/ package would execute arbitrary code in this workflow.
+        PYTHONSAFEPATH: '1'
         PYTHONPATH: ${{ github.action_path }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_SUMMARY: ${{ inputs.summary }}
       run: |
+        set -euo pipefail
         SUMMARY_ARG=""
-        if [ "$INPUT_SUMMARY" = "true" ] && [ -n "$GITHUB_STEP_SUMMARY" ]; then
+        if [ "$INPUT_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
           SUMMARY_ARG="--summary-file $GITHUB_STEP_SUMMARY"
         fi
 
