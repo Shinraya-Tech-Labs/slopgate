@@ -5,6 +5,7 @@ Tests for Phantom Symbol & Hallucinated Import Detector.
 from pathlib import Path
 
 from slopgate.diff_parser import DiffParser
+from slopgate.engine import AuditEngine
 from slopgate.phantom import PhantomDetector, PhantomKind
 
 
@@ -217,3 +218,87 @@ def test_repo_root_local_package_is_known(tmp_path):
     deps = PhantomDetector.get_declared_dependencies(tmp_path)
     assert "mypkg" in deps
     assert Path(tmp_path / "mypkg").is_dir()
+
+
+def _audit_in(repo_root, diff_text):
+    return AuditEngine(repo_root=repo_root).audit_diff(diff_text)
+
+
+def _hallucinated(report):
+    return [v for v in report.violations if "HALLUCINATED" in v.rule_id]
+
+
+def test_namespace_package_without_init_is_local(tmp_path):
+    (tmp_path / "ns" / "sub").mkdir(parents=True)
+    (tmp_path / "ns" / "sub" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "ns" / "sub" / "util.py").write_text("def helper():\n    return 1\n")
+    diff = """diff --git a/app/main.py b/app/main.py
+--- a/app/main.py
++++ b/app/main.py
+@@ -1,1 +1,2 @@
++from ns.sub.util import helper
+"""
+    assert _hallucinated(_audit_in(tmp_path, diff)) == []
+
+
+def test_subproject_manifest_is_read(tmp_path):
+    (tmp_path / "services" / "api").mkdir(parents=True)
+    (tmp_path / "services" / "api" / "pyproject.toml").write_text(
+        '[project]\nname = "api"\ndependencies = ["fastapi>=0.100"]\n',
+        encoding="utf-8",
+    )
+    diff = """diff --git a/services/api/main.py b/services/api/main.py
+--- a/services/api/main.py
++++ b/services/api/main.py
+@@ -1,1 +1,2 @@
++from fastapi import FastAPI
+"""
+    assert _hallucinated(_audit_in(tmp_path, diff)) == []
+
+
+def test_setup_py_extras_are_dependencies(tmp_path):
+    (tmp_path / "setup.py").write_text(
+        "from setuptools import setup\n"
+        "setup(\n"
+        "    name='demo',\n"
+        "    install_requires=['requests'],\n"
+        "    extras_require={'aws': ['boto3>=1.0']},\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    deps = PhantomDetector.get_declared_dependencies(tmp_path)
+    assert {"requests", "boto3"} <= deps
+
+
+def test_import_alias_for_declared_distribution():
+    diff = """diff --git a/api/views.py b/api/views.py
+--- a/api/views.py
++++ b/api/views.py
+@@ -1,1 +1,2 @@
++from rest_framework.decorators import api_view
+"""
+    assert _incidents(diff, {"djangorestframework"}) == []
+
+
+def test_type_checking_imports_are_not_runtime_deps():
+    diff = """diff --git a/src/models.py b/src/models.py
+--- a/src/models.py
++++ b/src/models.py
+@@ -1,1 +1,4 @@
++from typing import TYPE_CHECKING
++if TYPE_CHECKING:
++    import pandas
+"""
+    assert _incidents(diff, set()) == []
+
+
+def test_bom_does_not_hide_the_first_line():
+    diff = (
+        "diff --git a/src/x.py b/src/x.py\n"
+        "--- a/src/x.py\n"
+        "+++ b/src/x.py\n"
+        "@@ -1,0 +1,1 @@\n"
+        "+\ufeffimport hallucinated_pkg\n"
+    )
+    incidents = _incidents(diff, set())
+    assert any(inc.symbol == "hallucinated_pkg" for inc in incidents)

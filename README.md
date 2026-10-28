@@ -168,7 +168,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run SlopGate Shield
-        uses: Shinraya-Tech-Labs/slopgate@v0.1.0
+        uses: Shinraya-Tech-Labs/slopgate@v0
         with:
           fail-on: blocked   # 'blocked' (fails on tamper/hallucinations) or 'warning'
 ```

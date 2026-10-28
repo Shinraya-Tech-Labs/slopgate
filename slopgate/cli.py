@@ -9,23 +9,22 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Ensure UTF-8 output on Windows consoles
-if sys.stdout and hasattr(sys.stdout, "reconfigure"):
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-if sys.stderr and hasattr(sys.stderr, "reconfigure"):
-    try:
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
 from slopgate import __version__
 from slopgate.engine import AuditEngine, Severity
 from slopgate.reporter import AnsiColor, Reporter
 
-GITHUB_WORKFLOW_TEMPLATE = f"""name: SlopGate PR Integrity Check
+
+def _configure_stdio() -> None:
+    """Ensure UTF-8 output on Windows consoles (only when running as a CLI)."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+GITHUB_WORKFLOW_TEMPLATE = """name: SlopGate PR Integrity Check
 
 on:
   pull_request:
@@ -45,7 +44,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run SlopGate Integrity Check
-        uses: Shinraya-Tech-Labs/slopgate@v{__version__}
+        uses: Shinraya-Tech-Labs/slopgate@v0
         with:
           fail-on: blocked
 """
@@ -131,9 +130,11 @@ def get_git_diff() -> str:
             ["git", "diff", "main...HEAD"],
             ["git", "diff", "origin/master...HEAD"],
             ["git", "diff", "master...HEAD"],
-            ["git", "diff", "HEAD~1"],
+            # Local runs audit the work in progress first: HEAD~1 last, so a
+            # plain `slopgate check` never reports an already-merged commit.
             ["git", "diff", "--cached"],
             ["git", "diff"],
+            ["git", "diff", "HEAD~1"],
         ]
     )
     for cmd in cmds:
@@ -146,24 +147,63 @@ def get_git_diff() -> str:
     return ""
 
 
+def _decode_diff_bytes(data: bytes) -> str:
+    """Decodes a saved diff, honouring the UTF-16 that PowerShell redirection adds."""
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace")
+    return data.decode("utf-8-sig", errors="replace")
+
+
+def _is_shallow_checkout() -> bool:
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return res.stdout.strip() == "true"
+    except Exception:
+        return False
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     """Audits diff text."""
-    if args.diff_file == "-":
-        diff_text = sys.stdin.read()
-    elif args.diff_file:
-        diff_text = Path(args.diff_file).read_text(encoding="utf-8", errors="ignore")
-    else:
-        diff_text = get_git_diff()
-        if not diff_text:
-            print(
-                "⚠️ No git diff detected. Provide a diff via --diff <file> or piped via stdin.",
-                file=sys.stderr,
-            )
-            # Failing open in CI would report success on a broken checkout
-            return 1 if os.environ.get("GITHUB_ACTIONS") == "true" else 0
+    try:
+        if args.diff_file == "-":
+            diff_text = _decode_diff_bytes(sys.stdin.buffer.read())
+        elif args.diff_file:
+            diff_text = _decode_diff_bytes(Path(args.diff_file).read_bytes())
+        else:
+            diff_text = get_git_diff()
+            if not diff_text:
+                hint = (
+                    " The checkout looks shallow; use actions/checkout with fetch-depth: 0."
+                    if _is_shallow_checkout()
+                    else ""
+                )
+                print(
+                    "⚠️ No git diff detected. Provide a diff via --diff <file> or piped via stdin."
+                    + hint,
+                    file=sys.stderr,
+                )
+                # Failing open in CI would report success on a broken checkout
+                return 1 if os.environ.get("GITHUB_ACTIONS") == "true" else 0
+    except OSError as exc:
+        print(f"⛔ Cannot read diff: {exc}", file=sys.stderr)
+        return 2
 
     engine = AuditEngine()
     report = engine.audit_diff(diff_text)
+
+    if diff_text.strip() and report.metrics.files_changed == 0:
+        # An unparsed diff must never look like a clean audit
+        print(
+            "⛔ No file changes could be parsed from the diff. "
+            "Is it a git unified diff (git diff --no-color)?",
+            file=sys.stderr,
+        )
+        return 2
 
     # Output formatting
     if args.format == "json":
@@ -234,8 +274,10 @@ def cmd_demo(args: argparse.Namespace) -> int:
     rep3 = engine.audit_diff(SAMPLE_CLEAN_DIFF)
     print(Reporter.render_terminal(rep3))
 
+    intercepted = sum(1 for rep in (rep1, rep2) if rep.status == Severity.BLOCKED)
+    approved = sum(1 for rep in (rep1, rep2, rep3) if rep.status == Severity.INFO)
     print(
-        f"{AnsiColor.GREEN}{AnsiColor.BOLD}✓ Simulator completed: 2 rogue AI PRs intercepted, 1 clean bugfix approved.{AnsiColor.RESET}\n"
+        f"{AnsiColor.GREEN}{AnsiColor.BOLD}✓ Simulator completed: {intercepted} rogue AI PR(s) intercepted, {approved} clean bugfix approved.{AnsiColor.RESET}\n"
     )
     return 0
 
@@ -266,6 +308,7 @@ def cmd_badge(args: argparse.Namespace) -> int:
 
 
 def main():
+    _configure_stdio()
     parser = argparse.ArgumentParser(
         prog="slopgate",
         description="🛡️ SlopGate: AST-Based Code Integrity & PR Integrity Shield",

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Tuple
 
-from slopgate.diff_parser import FileDiff, Hunk
+from slopgate.diff_parser import FileDiff
 from slopgate.fragment import Fragment
 
 
@@ -32,9 +32,17 @@ class TamperIncident:
 
 # Exact attribute chains that neuter a test. Substring matching is not enough:
 # '@pytest.mark.skipif' starts with '@pytest.mark.skip' but is legitimate.
-SKIP_SYMBOLS = {"pytest.skip", "pytest.mark.skip", "unittest.skip"}
+SKIP_SYMBOLS = {
+    "pytest.skip",
+    "pytest.mark.skip",
+    "pytest.mark.xfail",
+    "pytest.importorskip",
+    "unittest.skip",
+    "unittest.expectedFailure",
+}
 SKIP_FALLBACK_RE = re.compile(
-    r"^\s*@?(?:pytest\.mark\.skip|unittest\.skip|pytest\.skip)\b"
+    r"^\s*@?(?:pytest\.mark\.(?:skip|xfail)|unittest\.(?:skip|expectedFailure)"
+    r"|pytest\.(?:skip|importorskip))\b"
 )
 
 
@@ -88,33 +96,29 @@ class AstTamperAnalyzer:
     def _check_assert_deletions(
         cls, file_diff: FileDiff, incidents: List[TamperIncident]
     ):
-        """A hunk that drops assertions without replacing them is a tamper signal.
+        """Net assertion loss across the file is a tamper signal.
 
-        Comparing per hunk (not per file) stops an unrelated new assertion in a
-        different test from masking a deletion.
+        Counted per file (not per hunk) so splitting a test or converting it to
+        parametrize does not look like a deletion; a net drop still counts.
         """
         if file_diff.is_deleted:
             return
+        removed_asserts: List[Tuple[int, str]] = []
+        added_count = 0
         for hunk in file_diff.hunks:
-            cls._check_hunk_assertions(file_diff, hunk, incidents)
+            removed_asserts.extend(cls._assert_lines(hunk.removed))
+            added_count += len(cls._assert_lines(hunk.added))
 
-    @classmethod
-    def _check_hunk_assertions(
-        cls, file_diff: FileDiff, hunk: Hunk, incidents: List[TamperIncident]
-    ):
-        removed_asserts = cls._assert_lines(hunk.removed)
-        added_asserts = cls._assert_lines(hunk.added)
-
-        net_loss = len(removed_asserts) - len(added_asserts)
+        net_loss = len(removed_asserts) - added_count
         if net_loss <= 0:
             return
-        for ln, line in removed_asserts[:net_loss]:
+        for ln, line in removed_asserts[-net_loss:]:
             incidents.append(
                 TamperIncident(
                     kind=TamperKind.ASSERT_DELETED,
                     file_path=file_diff.target_path,
                     line_number=ln,
-                    message=f"Removed {net_loss} assertion(s) in this hunk without equivalent replacement.",
+                    message=f"Removed {net_loss} assertion(s) without equivalent replacement.",
                     snippet=line.strip(),
                 )
             )
@@ -237,31 +241,22 @@ class AstTamperAnalyzer:
                         fragment.real_line(getattr(node, "lineno", 1), offset)
                     )
 
-        if found_lines:
-            for ln in sorted(found_lines):
-                incidents.append(
-                    TamperIncident(
-                        kind=TamperKind.TEST_SKIPPED,
-                        file_path=file_diff.target_path,
-                        line_number=ln,
-                        message="Test explicitly skipped with pytest.skip / @mark.skip in PR.",
-                        snippet="skip",
-                    )
-                )
-            return
-
-        # Fallback for fragments the parser cannot handle (e.g. mixed indentation)
+        # Always scan lines too: the AST path sees one node per decorator chain,
+        # the regex catches what a partially parseable fragment hides.
         for idx, (ln, line) in enumerate(file_diff.added_lines, start=1):
-            if idx in covered:
+            if idx in covered or ln in found_lines:
                 continue
             stripped = line.strip()
             if SKIP_FALLBACK_RE.match(stripped):
-                incidents.append(
-                    TamperIncident(
-                        kind=TamperKind.TEST_SKIPPED,
-                        file_path=file_diff.target_path,
-                        line_number=ln,
-                        message="Test explicitly skipped with pytest.skip / @mark.skip in PR.",
-                        snippet=stripped,
-                    )
+                found_lines.add(ln)
+
+        for ln in sorted(found_lines):
+            incidents.append(
+                TamperIncident(
+                    kind=TamperKind.TEST_SKIPPED,
+                    file_path=file_diff.target_path,
+                    line_number=ln,
+                    message="Test explicitly skipped with skip/xfail/expectedFailure in PR.",
+                    snippet="skip",
                 )
+            )

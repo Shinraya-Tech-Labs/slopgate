@@ -116,8 +116,21 @@ class AuditEngine:
         tampered_test = False
 
         for f in files:
-            # A deleted test file is not a reproduction test
-            if f.is_test_file and not f.is_deleted:
+            if f.is_test_file and f.is_deleted:
+                # Deleting the test is the cheapest way to "make it pass"
+                tampered_test = True
+                violations.append(
+                    Violation(
+                        rule_id="SG-TEST_FILE_DELETED",
+                        severity=Severity.BLOCKED,
+                        file_path=f.old_path or f.target_path,
+                        line_number=1,
+                        title="Test File Deleted",
+                        message="PR deletes a test file instead of fixing the code under test.",
+                        snippet=None,
+                    )
+                )
+            elif f.is_test_file:
                 has_test_change = True
                 # Run Test Tampering Inspection
                 incidents = AstTamperAnalyzer.analyze_file(f)
@@ -128,6 +141,7 @@ class AuditEngine:
                         if inc.kind
                         in (
                             TamperKind.ASSERT_DELETED,
+                            TamperKind.ASSERT_WEAKENED,
                             TamperKind.TRY_EXCEPT_BYPASS,
                             TamperKind.TEST_SKIPPED,
                         )

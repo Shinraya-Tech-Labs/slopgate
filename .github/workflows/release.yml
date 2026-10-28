@@ -2,8 +2,9 @@ name: Publish Release
 
 on:
   push:
+    # Version tags only: the floating `v0` tag must not start a release run.
     tags:
-      - 'v*'
+      - 'v*.*.*'
 
 # Build and publish are separate jobs with separate privileges. Building the
 # package must never share a job with the PyPI token.
@@ -70,7 +71,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [build, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write

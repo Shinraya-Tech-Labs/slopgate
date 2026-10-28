@@ -22,7 +22,7 @@ def test_detect_assert_deletion():
     assert any(inc.kind == TamperKind.ASSERT_DELETED for inc in _incidents(diff_text))
 
 
-def test_assert_deletion_not_masked_by_other_hunk():
+def test_assert_move_between_hunks_is_not_a_deletion():
     diff_text = """diff --git a/tests/test_math.py b/tests/test_math.py
 --- a/tests/test_math.py
 +++ b/tests/test_math.py
@@ -33,8 +33,25 @@ def test_assert_deletion_not_masked_by_other_hunk():
 +    assert add(1, 1) == 2
      pass
 """
-    incidents = _incidents(diff_text)
-    assert any(inc.kind == TamperKind.ASSERT_DELETED for inc in incidents)
+    # Splitting a test moves assertions between hunks; only a net loss counts
+    assert not any(
+        inc.kind == TamperKind.ASSERT_DELETED for inc in _incidents(diff_text)
+    )
+
+
+def test_assert_net_loss_across_hunks_is_a_deletion():
+    diff_text = """diff --git a/tests/test_math.py b/tests/test_math.py
+--- a/tests/test_math.py
++++ b/tests/test_math.py
+@@ -10,3 +10,1 @@ def test_one():
+-    assert add(2, 2) == 4
+-    assert add(3, 3) == 6
++    pass
+@@ -40,1 +38,2 @@ def test_two():
++    assert add(1, 1) == 2
+     pass
+"""
+    assert any(inc.kind == TamperKind.ASSERT_DELETED for inc in _incidents(diff_text))
 
 
 def test_assert_rewrite_in_same_hunk_is_not_a_deletion():
@@ -161,3 +178,27 @@ def test_incident_line_numbers_are_absolute():
 """
     incidents = _incidents(diff_text)
     assert [inc.line_number for inc in incidents] == [102]
+
+
+def test_django_style_tests_module_is_detected():
+    diff_text = """diff --git a/blog/tests.py b/blog/tests.py
+--- a/blog/tests.py
++++ b/blog/tests.py
+@@ -10,2 +10,1 @@
+-    assert Post.objects.count() == 1
++    pass
+"""
+    assert any(inc.kind == TamperKind.ASSERT_DELETED for inc in _incidents(diff_text))
+
+
+def test_xfail_and_expected_failure_are_skips():
+    for marker in ('@pytest.mark.xfail(reason="flaky")', "@unittest.expectedFailure"):
+        diff_text = (
+            "diff --git a/tests/test_x.py b/tests/test_x.py\n"
+            "--- a/tests/test_x.py\n"
+            "+++ b/tests/test_x.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            f"+{marker}\n"
+            " def test_x():\n"
+        )
+        assert any(inc.kind == TamperKind.TEST_SKIPPED for inc in _incidents(diff_text))

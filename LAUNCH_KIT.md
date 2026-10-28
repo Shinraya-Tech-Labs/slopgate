@@ -44,7 +44,7 @@ You can try the interactive terminal simulation locally:
 pip install slopgate-cli && slopgate demo
 
 Or run it as a composite GitHub Action:
-uses: Shinraya-Tech-Labs/slopgate@v0.1.0
+uses: Shinraya-Tech-Labs/slopgate@v0
 
 Code: https://github.com/Shinraya-Tech-Labs/slopgate (Apache 2.0)
 

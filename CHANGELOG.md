@@ -6,6 +6,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-28
+
+Correctness release: two tamper classes that v0.1.0 reported as warnings now block.
+
+### Fixed
+
+- **Deleting a whole test file now blocks** (`SG-TEST_FILE_DELETED`) instead of
+  only emitting the missing-repro warning.
+- **`assert True` / `x is not None` weakening now blocks.** `ASSERT_WEAKENED` is
+  part of the blocked set, so the default `fail-on: blocked` catches it.
+- Local package detection walks the repo to depth 3 and no longer needs
+  `__init__.py`, so PEP 420 namespace packages, `src/` and `python/` layouts stop
+  reading as hallucinated imports. Virtualenv, `node_modules`, and build
+  directories are skipped.
+- Dependency manifests are read from subproject directories too (monorepos).
+- `setup.py` `extras_require` entries count as dependencies, not just
+  `install_requires`.
+- Import/distribution aliases for `rest_framework`, `django_filters`, `github`,
+  `MySQLdb`, `python-jose`, `grpcio`, and friends.
+- Django-style test files (`myapp/tests.py`, `conftest.py`, `*_spec.py`, `spec/`)
+  are treated as tests, so tampering there is detected.
+- `from conftest import ...` and sibling helper modules resolve as local modules.
+- A saved diff in UTF-16 (PowerShell `git diff > pr.diff`) is decoded instead of
+  parsing to zero files and reporting a pass.
+- An unparseable or unreadable diff exits 2 instead of being reported as clean.
+- Missing `--diff` file prints one line and exits 2 instead of a traceback.
+- Imports under `if TYPE_CHECKING:` are not treated as runtime dependencies.
+- A UTF-8 BOM no longer hides findings on line 1.
+- `@pytest.mark.xfail`, `unittest.expectedFailure`, and `pytest.importorskip` are
+  detected as skips; the line fallback now always runs alongside the AST pass.
+- Shallow checkouts suggest `fetch-depth: 0` instead of only "no diff detected".
+
+### Changed
+
+- Assert deletions are counted per file rather than per hunk, so splitting a test
+  or moving assertions between hunks is not a false block; a net loss still is.
+- `slopgate install` pins `@v0` (patch/minor updates) instead of the exact tag.
+- The dogfood workflow no longer requests unused `pull-requests: write`.
+- The Release job waits for the PyPI publish job, so a failed upload no longer
+  produces a GitHub Release.
+- Added the Python 3.14 classifier.
+
 ## [0.1.0] - 2026-10-28
 
 First public release. Python 3.10+, zero runtime dependencies.

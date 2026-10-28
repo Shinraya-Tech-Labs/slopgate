@@ -38,11 +38,14 @@ class FileDiff:
     @property
     def is_test_file(self) -> bool:
         path = self.target_path.lower()
+        name = Path(path).name
         parts = Path(path).parts
         return (
-            any(p in ("tests", "test", "__tests__") for p in parts)
-            or Path(path).name.startswith("test_")
-            or Path(path).name.endswith("_test.py")
+            any(p in ("tests", "test", "__tests__", "spec", "specs") for p in parts)
+            # Django/Flask style: myapp/tests.py, conftest.py, *_spec.py
+            or name in ("tests.py", "test.py", "conftest.py")
+            or name.startswith(("test_", "spec_"))
+            or name.endswith(("_test.py", "_tests.py", "_spec.py"))
         )
 
     @property

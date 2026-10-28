@@ -45,12 +45,14 @@ def _lexical_string_lines(text: str) -> Set[int]:
 class Fragment:
     def __init__(self, file_diff: FileDiff):
         self.text = "\n".join(line for _, line in file_diff.added_lines)
+        # A UTF-8 BOM on line 1 makes the whole fragment unparseable
+        self.text = self.text.lstrip("\ufeff")
         self.line_map: List[int] = [ln for ln, _ in file_diff.added_lines]
 
     @classmethod
     def from_lines(cls, lines: List[Tuple[int, str]]) -> "Fragment":
         fragment = cls.__new__(cls)
-        fragment.text = "\n".join(line for _, line in lines)
+        fragment.text = "\n".join(line for _, line in lines).lstrip("\ufeff")
         fragment.line_map = [ln for ln, _ in lines]
         return fragment
 

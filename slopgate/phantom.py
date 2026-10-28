@@ -5,6 +5,7 @@ in Python standard library, project manifests, or local repository files.
 """
 
 import ast
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -35,6 +36,16 @@ def _normalize(name: str) -> str:
     name = name.split("[")[0]
     name = re.split(r"[<>=~!;\s]", name)[0]
     return name.strip().replace("-", "_").replace(".", "_").lower()
+
+
+def _dotted(node: ast.AST) -> str:
+    """Dotted name of a Name/Attribute chain ('typing.TYPE_CHECKING')."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return ""
 
 
 class PhantomDetector:
@@ -92,7 +103,42 @@ class PhantomDetector:
         "usb": "pyusb",
         "attr": "attrs",
         "gi": "pygobject",
+        "rest_framework": "djangorestframework",
+        "django_filters": "django_filter",
+        "github": "pygithub",
+        "mysql": "mysqlclient",
+        "mysqldb": "mysqlclient",
+        "jose": "python_jose",
+        "slugify": "python_slugify",
+        "magic": "python_magic",
+        "docx": "python_docx",
+        "pptx": "python_pptx",
+        "fitz": "pymupdf",
+        "grpc": "grpcio",
+        "googleapiclient": "google_api_python_client",
     }
+
+    # Vendored, virtualenv, and build-output trees are not project code.
+    IGNORED_DIRS = {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "env",
+        "node_modules",
+        "build",
+        "dist",
+        "__pycache__",
+        ".tox",
+        ".nox",
+        ".mypy_cache",
+        ".pytest_cache",
+        "site-packages",
+        "htmlcov",
+        ".eggs",
+    }
+    LOCAL_SCAN_DEPTH = 3
 
     # Common hallucinated methods on standard library objects
     KNOWN_STDLIB_HALLUCINATIONS = {
@@ -109,10 +155,49 @@ class PhantomDetector:
 
     @classmethod
     def get_declared_dependencies(cls, repo_root: Optional[Path] = None) -> Set[str]:
-        """Scans dependency manifests and local modules to extract valid import names."""
-        deps: Set[str] = set()
-        repo_root = repo_root or Path.cwd()
+        """Scans dependency manifests and local modules to extract valid import names.
 
+        Manifests are read from every directory up to LOCAL_SCAN_DEPTH so
+        monorepos and `src/` layouts resolve too. The manifest is the PR head's
+        copy: shortcut: a PR that adds its own dependency declaration can
+        whitelist a package in the same diff, move to base-SHA manifests if
+        that is ever abused.
+        """
+        repo_root = (repo_root or Path.cwd()).resolve()
+        deps: Set[str] = set()
+
+        for directory in cls._walk_dirs(repo_root):
+            cls._scan_manifests(directory, deps)
+            if directory != repo_root:
+                # Local package directory (works without __init__.py, PEP 420)
+                deps.add(directory.name.lower())
+            for entry in directory.iterdir():
+                if entry.is_file() and entry.suffix == ".py":
+                    deps.add(entry.stem.lower())
+
+        deps.discard("")
+        return deps
+
+    @classmethod
+    def _walk_dirs(cls, repo_root: Path) -> List[Path]:
+        """Repo directories up to LOCAL_SCAN_DEPTH, skipping vendored/venv trees."""
+        dirs: List[Path] = []
+        base_depth = len(repo_root.parts)
+        for dirpath, dirnames, _ in os.walk(repo_root):
+            current = Path(dirpath)
+            if len(current.parts) - base_depth >= cls.LOCAL_SCAN_DEPTH:
+                dirnames[:] = []
+            dirnames[:] = [
+                d
+                for d in dirnames
+                if d.lower() not in cls.IGNORED_DIRS and not d.startswith(".")
+            ]
+            dirs.append(current)
+        return dirs
+
+    @classmethod
+    def _scan_manifests(cls, repo_root: Path, deps: Set[str]) -> None:
+        """Reads every dependency manifest directly inside one directory."""
         # 1. requirements.txt, requirements/*.txt, requirements-*.txt
         req_files = list(repo_root.glob("*requirement*.txt")) + list(
             repo_root.glob("requirements/*.txt")
@@ -120,14 +205,17 @@ class PhantomDetector:
         for req_file in sorted(set(req_files)):
             cls._read_requirements_file(req_file, deps)
 
-        # 2. setup.py install_requires=[...]
+        # 2. setup.py install_requires / extras_require (all quoted dist names)
         setup_py = repo_root / "setup.py"
         if setup_py.exists():
             try:
                 content = setup_py.read_text(encoding="utf-8", errors="ignore")
-                block = re.search(r"install_requires\s*=\s*\[(.*?)\]", content, re.S)
-                if block:
-                    for match in re.finditer(r'["\']([^"\']+)["\']', block.group(1)):
+                if "install_requires" in content or "extras_require" in content:
+                    for match in re.finditer(
+                        r'["\']([A-Za-z0-9][A-Za-z0-9_.\-]*)(?:\[[^\]]*\])?'
+                        r'(?:[<>=!~][^"\']*)?["\']',
+                        content,
+                    ):
                         deps.add(_normalize(match.group(1)))
             except Exception:
                 pass
@@ -182,17 +270,6 @@ class PhantomDetector:
                 )
             except Exception:
                 pass
-
-        # 7. Local repo top-level packages & modules
-        for p in repo_root.glob("*.py"):
-            deps.add(p.stem.lower())
-        for pattern in ("*/__init__.py", "src/*.py", "src/*/__init__.py"):
-            for p in repo_root.glob(pattern):
-                deps.add(
-                    p.stem.lower() if p.name != "__init__.py" else p.parent.name.lower()
-                )
-
-        return deps
 
     @classmethod
     def _read_requirements_file(cls, path: Path, deps: Set[str], depth: int = 0):
@@ -311,9 +388,21 @@ class PhantomDetector:
     @classmethod
     def _scan_tree(cls, tree, file_diff, line_of, declared_deps: Set[str]):
         incidents: List[PhantomIncident] = []
+        # Imports under `if TYPE_CHECKING:` never load at runtime.
+        type_only_lines: Set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If) and _dotted(node.test) in (
+                "TYPE_CHECKING",
+                "typing.TYPE_CHECKING",
+            ):
+                end = getattr(node, "end_lineno", None) or node.lineno
+                type_only_lines.update(range(node.lineno, end + 1))
+
         for node in ast.walk(tree):
             # Check `import x`
             if isinstance(node, ast.Import):
+                if getattr(node, "lineno", 0) in type_only_lines:
+                    continue
                 for alias in node.names:
                     top_pkg = alias.name.split(".")[0]
                     if not cls._is_known_package(top_pkg, declared_deps):
@@ -329,6 +418,8 @@ class PhantomDetector:
 
             # Check `from x import y`
             elif isinstance(node, ast.ImportFrom):
+                if getattr(node, "lineno", 0) in type_only_lines:
+                    continue
                 # Relative imports (from . import x) always resolve inside the package
                 if node.module and not node.level:
                     top_pkg = node.module.split(".")[0]

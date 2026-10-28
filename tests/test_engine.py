@@ -19,7 +19,7 @@ def _audit(fixture_name: str):
 
 def test_tampered_diff_audit():
     report = AuditEngine().audit_diff(SAMPLE_TAMPERED_DIFF)
-    assert report.status == Severity.WARNING  # Assertion weakened
+    assert report.status == Severity.BLOCKED  # Assertion weakened
     assert any(v.rule_id == "SG-ASSERT_WEAKENED" for v in report.violations)
     # A tampered test must not count as a reproduction test
     assert not report.repro_verified
@@ -42,7 +42,15 @@ def test_clean_diff_audit():
 
 
 def test_warning_is_not_clean():
-    report = AuditEngine().audit_diff(SAMPLE_TAMPERED_DIFF)
+    diff_text = """diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,3 @@
+ def run():
++    log("starting")
+     return 1
+"""
+    report = AuditEngine().audit_diff(diff_text)
     assert report.status == Severity.WARNING
     assert not report.is_clean
     assert report.not_blocked
@@ -103,8 +111,8 @@ deleted file mode 100644
 """
     report = AuditEngine().audit_diff(diff_text)
     assert not report.repro_verified
-    assert any(v.rule_id == "SG-MISSING_TEST_REPRO" for v in report.violations)
-    assert report.status != Severity.INFO
+    assert report.status == Severity.BLOCKED
+    assert any(v.rule_id == "SG-TEST_FILE_DELETED" for v in report.violations)
 
 
 def test_docs_only_diff_is_not_doc_bloat():

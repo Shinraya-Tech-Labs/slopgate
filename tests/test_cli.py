@@ -99,7 +99,7 @@ def test_install_template_pins_released_action_tag(monkeypatch, capsys, tmp_path
     text = (tmp_path / ".github" / "workflows" / "slopgate.yml").read_text(
         encoding="utf-8"
     )
-    assert f"Shinraya-Tech-Labs/slopgate@v{cli.__version__}" in text
+    assert "Shinraya-Tech-Labs/slopgate@v0" in text
     assert "pull-requests: write" not in text
     capsys.readouterr()
 
@@ -174,3 +174,27 @@ def test_checked_out_pr_cannot_shadow_package(tmp_path):
     )
     assert not marker.exists()
     assert result.returncode == 1
+
+
+def test_missing_diff_file_exits_2(monkeypatch, capsys):
+    code = _main(
+        monkeypatch, ["check", "--diff", str(FIXTURES / "does_not_exist.diff")]
+    )
+    assert code == 2
+    assert "Cannot read diff" in capsys.readouterr().err
+
+
+def test_unparseable_diff_exits_2(monkeypatch, capsys, tmp_path):
+    bad = tmp_path / "pr.diff"
+    bad.write_text("not a diff, just prose\n", encoding="utf-8")
+    assert _main(monkeypatch, ["check", "--diff", str(bad)]) == 2
+    assert "No file changes could be parsed" in capsys.readouterr().err
+
+
+def test_utf16_diff_is_decoded(monkeypatch, capsys, tmp_path):
+    """PowerShell `git diff > pr.diff` writes UTF-16; it must not read as clean."""
+    text = (FIXTURES / "neutered_test.diff").read_text(encoding="utf-8")
+    path = tmp_path / "pr.diff"
+    path.write_bytes(b"\xff\xfe" + text.encode("utf-16-le"))
+    assert _main(monkeypatch, ["check", "--diff", str(path)]) == 1
+    capsys.readouterr()
