@@ -8,7 +8,7 @@ import ast
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from slopgate.diff_parser import FileDiff
 from slopgate.fragment import Fragment
@@ -44,6 +44,15 @@ SKIP_FALLBACK_RE = re.compile(
     r"^\s*@?(?:pytest\.mark\.(?:skip|xfail)|unittest\.(?:skip|expectedFailure)"
     r"|pytest\.(?:skip|importorskip))\b"
 )
+# `skipif(<constant>)` and `raise SkipTest` neuter a test exactly like @skip does.
+SKIPIF_SYMBOLS = {"pytest.mark.skipif", "unittest.skipIf", "skipif", "skipIf"}
+SKIP_EXCEPTIONS = {"unittest.SkipTest", "SkipTest"}
+# Calls that check a value rather than its truthiness.
+STRONG_ASSERT_CALLS = {"isinstance", "issubclass", "hasattr", "callable", "all", "any"}
+
+
+def _is_constant_true(node) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
 
 
 def _dotted(node: ast.AST) -> str:
@@ -66,6 +75,7 @@ class AstTamperAnalyzer:
 
         cls._check_assert_deletions(file_diff, incidents)
         cls._check_weak_replacements(file_diff, incidents)
+        cls._check_existence_replacement(file_diff, incidents)
 
         # 2. Check for Weakened Assertions / Tautologies in newly added lines using AST
         covered = Fragment(file_diff).string_lines()
@@ -142,13 +152,33 @@ class AstTamperAnalyzer:
         ]
         if not any(cls._assert_compares(line) for line in removed):
             return
+        # A re-indented assertion (moved into/out of a block) is not a rewrite.
+        removed_text = {line.strip() for line in removed}
         added = cls._assert_lines(file_diff.added_lines)
-        if not added or any(cls._assert_compares(line) for _, line in added):
+        if not added:
             return
-        weak = [(ln, line) for ln, line in added if cls._is_weak_assert(line)]
+        weak = [
+            (ln, line)
+            for ln, line in added
+            if cls._is_weak_assert(line) and line.strip() not in removed_text
+        ]
         if not weak:
             return
-        for ln, line in weak:
+        # When every added assertion is weak the whole file was gutted; when the
+        # PR also adds real comparisons, only flag weak checks on the same subject
+        # (e.g. `resp.status_code == 200` -> `assert resp.ok`).
+        if all(cls._is_weak_assert(line) for _, line in added):
+            flagged = weak
+        else:
+            removed_roots = {
+                root for line in removed for root in cls._assert_roots(line)
+            }
+            flagged = [
+                (ln, line)
+                for ln, line in weak
+                if cls._assert_roots(line) & removed_roots
+            ]
+        for ln, line in flagged:
             incidents.append(
                 TamperIncident(
                     kind=TamperKind.ASSERT_WEAKENED,
@@ -176,7 +206,7 @@ class AstTamperAnalyzer:
 
     @classmethod
     def _is_weak_assert(cls, line: str) -> bool:
-        """`assert x`, `assert x.y`, `assert not x`, `assert f()` — no value check.
+        """`assert x`, `assert x.y`, `assert not x`, `assert f()` â€” no value check.
 
         `self.assertIn(...)` / `assert_equal(...)` are real helpers, not weak.
         """
@@ -188,9 +218,8 @@ class AstTamperAnalyzer:
             test = test.operand
         if isinstance(test, ast.Call):
             func = test.func
-            if isinstance(func, ast.Attribute) and func.attr.startswith("assert"):
-                return False
-            if isinstance(func, ast.Name) and func.id.startswith("assert"):
+            name = _dotted(func).split(".")[-1]
+            if name.startswith("assert") or name in STRONG_ASSERT_CALLS:
                 return False
         return isinstance(test, (ast.Name, ast.Attribute, ast.Call))
 
@@ -205,8 +234,70 @@ class AstTamperAnalyzer:
         ]
 
     @classmethod
+    def _check_existence_replacement(
+        cls, file_diff: FileDiff, incidents: List[TamperIncident]
+    ):
+        """`assert x is not None` only counts when it replaced a check on x.
+
+        A brand-new test legitimately asserts that a value exists; masking shows up
+        when the same subject stops being compared and starts being existence-checked.
+        """
+        removed: Set[str] = set()
+        for hunk in file_diff.hunks:
+            for _, line in cls._assert_lines(hunk.removed):
+                removed |= cls._assert_roots(line)
+        if not removed:
+            return
+        for ln, line in cls._assert_lines(file_diff.added_lines):
+            if cls._is_existence_check(line) and cls._assert_roots(line) & removed:
+                incidents.append(
+                    TamperIncident(
+                        kind=TamperKind.ASSERT_WEAKENED,
+                        file_path=file_diff.target_path,
+                        line_number=ln,
+                        message="Weakened assertion: 'is not None' checks existence instead of value equivalence.",
+                        snippet=line.strip(),
+                    )
+                )
+
+    @classmethod
+    def _assert_roots(cls, line: str) -> Set[str]:
+        """Base object behind the assertion's subject (`resp.json() == x` -> resp)."""
+        node = cls._assert_node(line)
+        if node is None:
+            return set()
+        exprs = node.test.values if isinstance(node.test, ast.BoolOp) else [node.test]
+        roots: Set[str] = set()
+        for expr in exprs:
+            if isinstance(expr, ast.UnaryOp) and isinstance(expr.op, ast.Not):
+                expr = expr.operand
+            if isinstance(expr, ast.Compare):
+                expr = expr.left
+            while isinstance(expr, (ast.Attribute, ast.Subscript)):
+                expr = expr.value
+            if isinstance(expr, ast.Call):
+                expr = expr.func
+                while isinstance(expr, (ast.Attribute, ast.Subscript)):
+                    expr = expr.value
+            if isinstance(expr, ast.Name):
+                roots.add(expr.id)
+        return roots
+
+    @classmethod
+    def _is_existence_check(cls, line: str) -> bool:
+        node = cls._assert_node(line)
+        if node is None:
+            return bool(re.search(r"\bis\s+not\s+None\b", line))
+        return isinstance(node.test, ast.Compare) and any(
+            isinstance(op, ast.IsNot)
+            and isinstance(comparator, ast.Constant)
+            and comparator.value is None
+            for op, comparator in zip(node.test.ops, node.test.comparators)
+        )
+
+    @classmethod
     def _check_weakened_assert(cls, assert_line: str) -> Optional[str]:
-        """Uses AST to determine if an assertion is a tautology or weakened existence check."""
+        """Uses AST to determine if an assertion is a tautology."""
         try:
             tree = ast.parse(assert_line)
             for node in ast.walk(tree):
@@ -216,15 +307,19 @@ class AstTamperAnalyzer:
                     if isinstance(test, ast.Constant) and test.value in (True, 1):
                         return "Tautological assertion: 'assert True' / 'assert 1' validates nothing."
 
-                    # assert ... is not None
+                    # assert x or True — short-circuits to always-true
+                    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or):
+                        if any(
+                            isinstance(value, ast.Constant) and value.value
+                            for value in test.values
+                        ):
+                            return (
+                                "Tautological assertion: '... or True' can never fail."
+                            )
+
+                    # assert len(...) >= 0
                     if isinstance(test, ast.Compare):
                         for op, comparator in zip(test.ops, test.comparators):
-                            if (
-                                isinstance(op, ast.IsNot)
-                                and isinstance(comparator, ast.Constant)
-                                and comparator.value is None
-                            ):
-                                return "Weakened assertion: 'is not None' checks existence instead of value equivalence."
                             if (
                                 isinstance(op, ast.GtE)
                                 and isinstance(comparator, ast.Constant)
@@ -240,8 +335,6 @@ class AstTamperAnalyzer:
             # Fallback regex
             if re.search(r"assert\s+True\b|assert\s+1\b", assert_line):
                 return "Tautological assertion: 'assert True' / 'assert 1' validates nothing."
-            if re.search(r"\bis\s+not\s+None\b", assert_line):
-                return "Weakened assertion: 'is not None' checks existence instead of value equivalence."
         return None
 
     @staticmethod
@@ -311,6 +404,22 @@ class AstTamperAnalyzer:
                     found_lines.add(
                         fragment.real_line(getattr(node, "lineno", 1), offset)
                     )
+                elif (
+                    isinstance(node, ast.Call)
+                    and _dotted(node.func) in SKIPIF_SYMBOLS
+                    and _is_constant_true(node.args[0] if node.args else None)
+                ):
+                    found_lines.add(
+                        fragment.real_line(getattr(node, "lineno", 1), offset)
+                    )
+                elif (
+                    isinstance(node, ast.Raise)
+                    and isinstance(node.exc, ast.Call)
+                    and _dotted(node.exc.func) in SKIP_EXCEPTIONS
+                ):
+                    found_lines.add(
+                        fragment.real_line(getattr(node, "lineno", 1), offset)
+                    )
 
         # Always scan lines too: the AST path sees one node per decorator chain,
         # the regex catches what a partially parseable fragment hides.
@@ -319,6 +428,10 @@ class AstTamperAnalyzer:
                 continue
             stripped = line.strip()
             if SKIP_FALLBACK_RE.match(stripped):
+                found_lines.add(ln)
+            elif re.match(
+                r"^@?(?:[\w.]*\.)?(?:skipif|skipIf)\(\s*True\b", stripped
+            ) or re.match(r"raise\s+(?:unittest\.)?SkipTest\b", stripped):
                 found_lines.add(ln)
 
         for ln in sorted(found_lines):

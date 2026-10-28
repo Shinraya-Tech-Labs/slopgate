@@ -6,6 +6,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-28
+
+### Added
+
+- `SG-TEST_SKIPPED` now also catches `@pytest.mark.skipif(True, ...)` and
+  `raise unittest.SkipTest(...)` — two ways to disable a test without adding
+  a skip marker.
+- `SG-ASSERT_WEAKENED` now catches the `assert x == 1 or True` tautology and
+  truthiness masking that hides among other comparisons in the same file.
+
+### Fixed
+
+- `assert x is not None` in a brand-new or reworked test no longer blocks: it
+  is only reported when the same object lost a value comparison, which is the
+  actual masking pattern.
+- `assert isinstance(...)`, `hasattr`, `all` and `any` are real checks, not
+  truthiness, and re-indented assertions are no longer treated as rewrites.
+  (Found by running the gate over merged PRs in Flask.)
+- Companion packages of a declared dependency (`pydantic_core` with
+  `pydantic`) no longer report `SG-HALLUCINATED_IMPORT`. (Found by running the
+  gate over merged PRs in FastAPI.)
+
 ## [0.1.3] - 2026-10-28
 
 ### Added

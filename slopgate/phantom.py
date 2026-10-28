@@ -577,6 +577,11 @@ class PhantomDetector:
         # `google-cloud-storage` (normalized prefix match).
         if any(dep.startswith(pkg_clean + "_") for dep in declared_deps):
             return True
+        # Companion packages: `pydantic_core` ships with a declared `pydantic`.
+        # shortcut: name-prefix heuristic, upgrade to distribution metadata if a
+        # companion package without the shared prefix is reported.
+        if any(pkg_clean.startswith(dep + "_") for dep in declared_deps):
+            return True
         # Common build / test tooling usually injected by CI
         if pkg_clean in {
             "pytest",

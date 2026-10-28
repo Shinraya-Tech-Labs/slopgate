@@ -212,10 +212,10 @@ slopgate install
 ### 1. Test Tampering & Neutering Guard
 Detects when a pull request attempts to pass failing CI by:
 - Deleting `assert` statements in existing test files, or deleting the test file.
-- Replacing strict comparisons (`assert x == 42`) with tautologies (`assert x is not None` or `assert True` or `assert len(x) >= 0`).
+- Replacing strict comparisons (`assert x == 42`) with tautologies (`assert True`, `assert len(x) >= 0`, `assert x > 0 or True`) or an existence check on the same value (`assert x is not None`).
 - Masking a removed value comparison behind a bare truthiness check (`assert cart`).
 - Wrapping failing assertions in silent `try: ... except: pass` blocks.
-- Explicitly adding `@pytest.mark.skip` to failing tests.
+- Explicitly adding `@pytest.mark.skip`, `@pytest.mark.skipif(True, ...)`, `raise unittest.SkipTest(...)`, or `xfail` to failing tests.
 
 ### 2. Phantom Symbol & Hallucinated Import Detector
 - Intercepts newly added `import <package>` that does not exist in standard library, project manifests (`pyproject.toml`, `requirements.txt`), or local modules.

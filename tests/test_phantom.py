@@ -329,3 +329,14 @@ def test_added_dependencies_reads_manifest_hunks():
     files = DiffParser.parse(diff_text)
     added = PhantomDetector.added_dependencies(files, {"requests", "hallucinated_sdk"})
     assert added == {"hallucinated_sdk"}
+
+
+def test_companion_package_of_declared_dependency_is_allowed():
+    diff_text = """diff --git a/src/service.py b/src/service.py
+--- a/src/service.py
++++ b/src/service.py
+@@ -1,2 +1,3 @@
+ import os
++from pydantic_core import CoreSchema
+"""
+    assert _incidents(diff_text, {"pydantic"}) == []
