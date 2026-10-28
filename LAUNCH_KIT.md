@@ -1,105 +1,123 @@
-# 🚀 SlopGate Viral Launch Kit
-### *The Playbook to Reach GitHub Repo of the Day & Trending #1*
+# 🚀 SlopGate Perfected Launch Kit
+### *Engineered from Real-Time HN & r/Python Viral Analysis*
 
 ---
 
-## 1. Hacker News ("Show HN")
+## 1. Hacker News ("Show HN") — The 390+ Upvote Blueprint
 
-**Suggested Submission Time**: Tuesday or Wednesday at 8:00 AM EST (1:00 PM UTC / 6:30 PM IST) for peak algorithmic velocity.
+> **HN Submission Rules to Prevent Auto-Removal**:
+> 1. **Submission Type**: Click **Submit**, enter the URL directly: `https://github.com/Shinraya-Tech-Labs/slopgate`.
+> 2. **Title**: Keep it lowercase/sentence case, no adjectives like "super", "best", "blazing".
+> 3. **The First Comment Rule**: Immediately (within 60 seconds of submitting), open your post and add the founder comment below. HN rewards honesty about design trade-offs and zero-fluff technical mechanics.
 
-**Title**:
-> Show HN: SlopGate – Stop AI PR spam in open source using AST code invariants
+### Title to Submit:
+```text
+Show HN: SlopGate – AST-based code integrity check for pull requests
+```
 
-**Body**:
+### URL to Submit:
+```text
+https://github.com/Shinraya-Tech-Labs/slopgate
+```
+
+### Your Immediate First Comment (Copy & Paste):
 ```text
 Hey HN,
 
-Open source maintainers are drowning in AI-generated PR slop. As Daniel Stenberg (curl maintainer) recently put it, it has become an unintentional denial-of-service attack on open source projects.
+I kept seeing open-source maintainers express the exact same exhaustion: dealing with AI-generated pull requests that look plausible on the surface, but pass CI by weakening tests or inventing phantom APIs. As Daniel Stenberg (curl) put it, it's becoming an accidental denial-of-service attack on maintainer attention.
 
-Most "AI detector" tools try to detect "AI-sounding English prose" in PR descriptions. This is the wrong layer:
-1. An LLM agent (Cursor, Claude Code, Antigravity) easily writes beautiful, fluent Markdown with bullet points.
-2. It causes false positives on non-native English speakers who just used an LLM to polish their patch notes.
+Existing "AI detector" tools try to detect "AI-sounding English prose" in PR descriptions. I think that's the wrong layer:
+1. LLM agents easily generate clean Markdown with bullet points.
+2. It penalizes non-native English speakers who use an LLM just to proofread their notes.
 
-SlopGate does not judge your English. It enforces Code & Test Invariants via Python's AST in < 0.05 seconds:
-- Test Tamper Guard: Catches deleted asserts, tautology swaps (`assert x is not None` instead of `== value`), and `except: pass` bypasses.
-- Phantom Symbol Detector: Catches hallucinated packages and non-existent standard library calls (`json.loads_async`).
-- Zero Dependencies: Runs entirely on standard library. No API keys, no LLM tokens billed.
-- Runs as a 10-second GitHub Action or a local CLI (`pip install slopgate && slopgate demo`).
+I built SlopGate to inspect code and test invariants instead of English text, using Python's standard library `ast` in < 50ms:
+
+1. Test Tamper Guard: Catches deleted asserts, tautology swaps (e.g. replacing `assert result == expected` with `assert result is not None` or `assert True`), and silent `try: ... except: pass` blocks in test files.
+2. Phantom Symbol Detector: Catches uninstalled packages not in `pyproject.toml`/`requirements.txt` and hallucinated stdlib methods (like `json.loads_async`).
+3. Repro Check: Flags PRs that touch core logic without adding or updating a test.
+
+What it deliberately does NOT do:
+- It doesn't run an LLM in your CI (0 token costs, no API keys, runs offline).
+- It doesn't judge grammar or vocabulary.
+
+You can try the interactive terminal simulation locally:
+pip install slopgate && slopgate demo
+
+Or run it as a composite GitHub Action:
+uses: Shinraya-Tech-Labs/slopgate@main
+
+Code: https://github.com/Shinraya-Tech-Labs/slopgate (Apache 2.0)
+
+I'd genuinely love feedback from maintainers here on what AST rules or false-positive edge cases you'd like to see addressed.
+```
+
+---
+
+## 2. Reddit `r/Python` — 100% Automod-Compliant Blueprint
+
+> **Automod Rules for `r/Python`**:
+> - Must use post flair: `Project`.
+> - Must include the exact Markdown headings: `# What My Project Does`, `# Target Audience`, and `# Comparison`.
+
+### Title:
+```text
+SlopGate: Zero-dependency AST shield to catch test tampering and phantom packages in PRs
+```
+
+### Post Body:
+```markdown
+GitHub Repo: https://github.com/Shinraya-Tech-Labs/slopgate
+
+# What My Project Does
+
+SlopGate is an open-source CLI tool and composite GitHub Action that audits git diffs using Python's standard library `ast` module in under 50 milliseconds.
+
+It detects pull requests that pass CI dishonestly:
+1. **Assertion Tampering**: Catches deleted `assert` statements or tautological downgrades (e.g., swapping `assert res.status == 200` to `assert res is not None` or `assert True`).
+2. **Silent Failure Suppression**: Flags `try: ... except: pass` blocks introduced into test files.
+3. **Phantom Packages**: Detects imported packages not declared in `pyproject.toml` or `requirements.txt`.
+4. **Hallucinated Stdlib APIs**: Flags non-existent methods like `json.loads_async` or `os.mkdir_p`.
+
+It includes an interactive terminal simulation so you can see it in action without configuring CI:
+```bash
+pip install slopgate
+slopgate demo
+```
+
+# Target Audience
+
+Open-source maintainers, library authors, and teams managing CI pipelines who want deterministic PR integrity checks without paying for LLM tokens or dealing with probabilistic "AI text detectors."
+
+# Comparison
+
+- **vs "AI Text Detectors" (Anti-Slop / LLM Graders)**: Tools that classify English descriptions fail on non-native speakers and miss actual code bugs. SlopGate ignores the prose and verifies AST code invariants only.
+- **vs Linters (Ruff / Flake8)**: Linters check static syntax and style on individual files; SlopGate analyzes the semantic diff between branches to detect assertion weakening and missing reproduction tests.
+- **Dependencies**: 0 external dependencies (uses standard library `ast`, `sys`, `pathlib`, `re`).
+
+License: Apache 2.0
+Feedback and PRs are welcome!
+```
+
+---
+
+## 3. Twitter / X Viral Post
+
+```text
+Open-source maintainers are burning out from AI PR slop.
+
+The sneaky part? Coding agents "fix" failing tests by:
+1. Swapping `assert x == expected` to `assert x is not None`
+2. Wrapping asserts in `except: pass`
+3. Inventing fake APIs like `json.loads_async()`
+
+We built SlopGate: an AST-based Code Integrity Shield. 🛡️
+
+• 0 external dependencies (Python stdlib)
+• < 50ms runtime (no LLM tokens billed)
+• Zero false-positive drama (evaluates code, not English)
+
+Try the interactive demo:
+pip install slopgate && slopgate demo
 
 GitHub: https://github.com/Shinraya-Tech-Labs/slopgate
-Release: https://github.com/Shinraya-Tech-Labs/slopgate/releases/tag/v0.1.0
-
-I'd love your feedback on additional AST invariant rules you'd like to see.
 ```
-
----
-
-## 2. Twitter / X Viral Launch Thread
-
-**Tweet 1 (Hook)**:
-> Open-source maintainers are currently burning out from a flood of AI-generated PR slop.
-> 
-> "AI detector" bots that check PR text don't work—agents write fluent English, and it punishes non-native speakers.
-> 
-> Today we’re launching SlopGate: an AST-based Code Integrity Shield. 🛡️
-> 
-> [Attach 20-second video of running `slopgate demo` catching a weakened assert]
-
-**Tweet 2 (The Core Insight)**:
-> Why does AI PR slop pass CI?
-> 
-> Because coding agents "fix" failing tests by:
-> 1. Replacing `assert result == expected` with `assert result is not None`
-> 2. Wrapping failing asserts in `try: ... except: pass`
-> 3. Inventing fake APIs like `json.loads_async()`
-> 
-> SlopGate catches all 3 in < 50ms using Python AST.
-
-**Tweet 3 (Zero Dependencies)**:
-> No API keys. No LLM tokens billed. Zero external dependencies.
-> 
-> You can drop it into your repository with one command:
-> `slopgate install`
-> 
-> Or add the composite GitHub Action:
-> `uses: Shinraya-Tech-Labs/slopgate@main`
-
-**Tweet 4 (Call to Action)**:
-> Star the repo and add the shield badge to your README:
-> ⭐️ https://github.com/Shinraya-Tech-Labs/slopgate
-> 
-> Let's protect open-source maintainers.
-
----
-
-## 3. Reddit Launch Post (`r/programming` & `r/opensource`)
-
-**Title**:
-> We built SlopGate: An open-source AST code shield to stop AI PR spam and test tampering
-
-**Body**:
-```text
-Over 60% of open-source maintainer capacity is now swallowed by maintenance and triage. 
-
-A growing portion of that is AI PR slop: pull requests that look superficially competent, but pass CI by weakening test assertions or adding phantom dependencies.
-
-We built SlopGate as a zero-dependency, open-source GitHub Action and CLI that evaluates code invariants rather than guessing whether the English description was written by ChatGPT:
-
-1. Test Tamper Protection: Intercepts deleted assertions and tautologies (`assert x is not None`).
-2. Phantom Symbol Guard: Flags uninstalled packages and hallucinated stdlib methods.
-3. Repro Verification: Checks if a bugfix includes a test case.
-
-It runs locally with `pip install slopgate` and `slopgate demo`, or as a drop-in GitHub Action.
-
-Full repo & documentation: https://github.com/Shinraya-Tech-Labs/slopgate
-
-Feedback and PR contributions (which SlopGate will audit!) are welcome.
-```
-
----
-
-## 4. Upstream Show & Tell Outreach
-
-Open polite, value-adding issues or discussion threads in maintainer communities discussing AI PR policies:
-- Mention how AST invariant checking completely avoids the false-positive drama of text-based AI detectors.
-- Link directly to the live demo: `https://github.com/Shinraya-Tech-Labs/slopgate`
