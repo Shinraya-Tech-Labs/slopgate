@@ -10,9 +10,9 @@
 
 [![CI Test Suite](https://github.com/Shinraya-Tech-Labs/slopgate/actions/workflows/ci.yml/badge.svg)](https://github.com/Shinraya-Tech-Labs/slopgate/actions/workflows/ci.yml)
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue?style=flat-square&logo=python)](https://python.org)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20required-brightgreen?style=flat-square)](pyproject.toml)
-[![License](https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square)](LICENSE)
-[![GitHub Action](https://img.shields.io/badge/GitHub_Action-marketplace-orange?style=flat-square&logo=githubactions)](action.yml)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20required-brightgreen?style=flat-square)](https://github.com/Shinraya-Tech-Labs/slopgate/blob/main/pyproject.toml)
+[![License](https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square)](https://github.com/Shinraya-Tech-Labs/slopgate/blob/main/LICENSE)
+[![GitHub Action](https://img.shields.io/badge/GitHub_Action-marketplace-orange?style=flat-square&logo=githubactions)](https://github.com/Shinraya-Tech-Labs/slopgate/blob/main/action.yml)
 [![PyPI](https://img.shields.io/pypi/v/slopgate-cli?style=flat-square&logo=pypi)](https://pypi.org/project/slopgate-cli/)
 [![Protected by SlopGate](https://img.shields.io/badge/PRs-SlopGate_Protected-brightgreen?style=flat-square&logo=github)](https://github.com/Shinraya-Tech-Labs/slopgate)
 
@@ -28,7 +28,7 @@ slopgate demo
 
 <br/>
 
-[**Why SlopGate**](#-the-problem-death-by-a-thousand-slops) · [**How It Works**](#-how-it-works) · [**10-Second Setup**](#-10-second-github-action-setup) · [**The 4 Invariant Shields**](#-the-4-invariant-shields) · [**Comparison**](#-slopgate-vs-text-detectors) · [**Badge**](#-add-the-badge-to-your-readme)
+[**Why SlopGate**](#-the-problem-death-by-a-thousand-slops) · [**How It Works**](#-how-it-works) · [**CLI Usage**](#-local-cli-usage) · [**10-Second Setup**](#-10-second-github-action-setup) · [**The 4 Invariant Shields**](#-the-4-invariant-shields) · [**Comparison**](#-slopgate-vs-text-detectors) · [**Badge**](#-add-the-badge-to-your-readme)
 
 </div>
 
@@ -123,6 +123,24 @@ Violations Detected:
     Details:  json has no async loads method.
     Snippet:  symbol: json.loads_async
 ```
+
+---
+
+## 💻 Local CLI Usage
+
+Audit a branch, a saved diff, or a pipe — the same engine the Action runs:
+
+```bash
+slopgate check                                  # auto-detects the PR/branch diff
+slopgate check --fail-on warning                # fail on warnings as well
+slopgate check --format json                    # machine-readable report
+slopgate check --format github                  # Step Summary markdown + annotations
+git diff main...HEAD | slopgate check --diff -  # audit any diff you have
+```
+
+Exit codes are CI-friendly: `0` passed, `1` blocked (or warned, with
+`--fail-on warning`). Inside GitHub Actions SlopGate fails closed when it cannot
+find a diff, so a broken checkout can never report a false pass.
 
 ---
 
@@ -226,7 +244,7 @@ Preview:
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for local development and testing guidelines.
+We welcome contributions! Please see [CONTRIBUTING.md](https://github.com/Shinraya-Tech-Labs/slopgate/blob/main/CONTRIBUTING.md) for local development and testing guidelines.
 
 To run tests locally:
 ```bash
